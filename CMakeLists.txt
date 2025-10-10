@@ -22,6 +22,9 @@ FetchContent_Declare(
     libdxfrw
     GIT_REPOSITORY https://github.com/qgis/libdxfrw.git
     GIT_TAG master
+    PATCH_COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  ${CMAKE_SOURCE_DIR}/cmake/libdxfrw_patch/CMakeLists.txt
+                  ${CMAKE_BINARY_DIR}/_deps/libdxfrw-src/CMakeLists.txt
 )
 set(FETCHCONTENT_QUIET OFF)
 FetchContent_MakeAvailable(libdxfrw)
