@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include "../core/inputmanager.h"
 
 class ParametersWidget;
 class ViewerWidget;
@@ -27,6 +28,8 @@ private:
 
     QSplitter *horizontalSplitter;
     QSplitter *verticalSplitter;
+
+    InputManager inputManager;
 
     bool firstShow = true;
 

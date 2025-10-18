@@ -79,7 +79,8 @@ void MainWindow::setupMenu() {
 void MainWindow::loadFile() {
     QString fileName = QFileDialog::getOpenFileName(this, tr("Загрузить DXF"), "", tr("DXF Files (*.dxf)"));
     if (!fileName.isEmpty()) {
-        // TODO: Использовать IoLib для загрузки детали
+        Geometry geom = inputManager.loadDxf(fileName.toStdString());
+        viewer->setGeometry(geom);
     }
 }
 
