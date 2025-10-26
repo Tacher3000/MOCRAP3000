@@ -33,3 +33,51 @@ void DxfReader::addLWPolyline(const DRW_LWPolyline& lwpoly) {
     }
     geometry.lwpolylines.push_back(poly);
 }
+
+// void DxfReader::addEllipse(const DRW_Ellipse& ellipse) {
+//     geometry.ellipses.push_back({
+//         {ellipse.basePoint.x, ellipse.basePoint.y, ellipse.basePoint.z},
+//         {ellipse.secPoint.x, ellipse.secPoint.y, ellipse.secPoint.z},
+//         ellipse.ratio,
+//         ellipse.staparam,
+//         ellipse.endparam,
+//         ellipse.isccw,
+//         ellipse.thickness
+//     });
+// }
+
+// void DxfReader::addPolyline(const DRW_Polyline& polyline) {
+//     Polyline poly;
+//     poly.thickness = polyline.thickness;
+//     poly.flags = polyline.flags;
+//     for (const auto& v : polyline.vertlist) {
+//         const DRW_Vertex* vert = v.get();
+//         poly.vertices.push_back({
+//             {vert->basePoint.x, vert->basePoint.y, vert->basePoint.z},
+//             vert->bulge,
+//             vert->stawidth,
+//             vert->endwidth
+//         });
+//     }
+//     geometry.polylines.push_back(poly);
+// }
+
+// void DxfReader::addSpline(const DRW_Spline* spline) {
+//     Spline spl;
+//     spl.degree = spline->degree;
+//     spl.flags = spline->flags;
+//     spl.startTangentX = spline->tgStart.x;
+//     spl.startTangentY = spline->tgStart.y;
+//     spl.startTangentZ = spline->tgStart.z;
+//     spl.endTangentX = spline->tgEnd.x;
+//     spl.endTangentY = spline->tgEnd.y;
+//     spl.endTangentZ = spline->tgEnd.z;
+//     for (const auto& cp : spline->controllist) {
+//         spl.controlPoints.push_back({cp->x, cp->y, cp->z});
+//     }
+//     for (const auto& fp : spline->fitlist) {
+//         spl.fitPoints.push_back({fp->x, fp->y, fp->z});
+//     }
+//     spl.knotValues = spline->knotslist;
+//     geometry.splines.push_back(spl);
+// }
