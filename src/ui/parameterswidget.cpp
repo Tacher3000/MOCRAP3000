@@ -1,7 +1,10 @@
 #include "parameterswidget.h"
+#include <QHBoxLayout>
+#include <QDoubleValidator>
 
 ParametersWidget::ParametersWidget(QWidget *parent) : QWidget(parent) {
     layout = new QVBoxLayout(this);
+    layout->setContentsMargins(10, 10, 10, 10);
 
     sheetSizeLabel = new QLabel(tr("Размер листа (ширина x высота):"), this);
     sheetSizeLabel->setStyleSheet("font-size: 16px; padding: 5px;");
@@ -37,13 +40,30 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QWidget(parent) {
     partCount->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
     layout->addWidget(partCount);
 
-    optimizeButton = new QPushButton(tr("Оптимизировать"), this);
-    optimizeButton->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
+    optimizeButton = new QPushButton(tr("Запустить оптимизацию"), this);
+    optimizeButton->setStyleSheet("font-size: 18px; padding: 10px 20px; margin-top: 20px;");
     layout->addWidget(optimizeButton);
 
     layout->addStretch();
 
-    // TODO: Соединить optimizeButton с CoreLib для оптимизации и обновления layoutViewer
+    QDoubleValidator *validator = new QDoubleValidator(this);
+    validator->setBottom(0.0);
+    sheetWidth->setValidator(validator);
+    sheetHeight->setValidator(validator);
+    partSpacing->setValidator(validator);
+    cutThickness->setValidator(validator);
+    partCount->setValidator(new QIntValidator(1, 99999, this));
+
+    connect(optimizeButton, &QPushButton::clicked, this, &ParametersWidget::optimizeRequested);
 
     setLayout(layout);
+}
+
+NestingParameters ParametersWidget::getNestingParameters() const {
+    return NestingParameters::fromStrings(
+        sheetWidth->text().toStdString(),
+        sheetHeight->text().toStdString(),
+        partSpacing->text().toStdString(),
+        cutThickness->text().toStdString()
+        );
 }

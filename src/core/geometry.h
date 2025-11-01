@@ -2,11 +2,31 @@
 #define GEOMETRY_H
 
 #include <vector>
+#include <string>
+#include <stdexcept>
 
 struct Coord {
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
+};
+
+struct Point {
+    double x = 0.0;
+    double y = 0.0;
+};
+
+struct Contour {
+    std::vector<Point> points;
+    bool isHole = false;
+};
+
+struct Polygon {
+    std::vector<Contour> contours;
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
 };
 
 struct Line {
@@ -54,42 +74,27 @@ struct Ellipse {
     double thickness;
 };
 
-struct Vertex {
-    Coord location;
-    double bulge = 0.0;
-    double startWidth = 0.0;
-    double endWidth = 0.0;
-    double tangentDir = 0.0;
-};
-
-struct Polyline {
-    std::vector<Vertex> vertices;
-    double thickness = 0.0;
-    int flags = 0;
-};
-
-struct Spline {
-    std::vector<Coord> controlPoints;
-    std::vector<Coord> fitPoints;
-    std::vector<double> knotValues;
-    int degree;
-    int flags;
-    double startTangentX;
-    double startTangentY;
-    double startTangentZ;
-    double endTangentX;
-    double endTangentY;
-    double endTangentZ;
-};
-
-struct Geometry {
+struct Part {
     std::vector<Line> lines;
     std::vector<Arc> arcs;
     std::vector<Circle> circles;
     std::vector<LWPolyline> lwpolylines;
     std::vector<Ellipse> ellipses;
-    std::vector<Polyline> polylines;
-    std::vector<Spline> splines;
+    std::string name;
+    int id = 0;
+    Polygon polygon;
 };
 
-#endif
+
+struct Geometry {
+    std::vector<Part> parts;
+
+    const Part& getSinglePart() const {
+        if (parts.empty()) {
+            throw std::runtime_error("No parts loaded in geometry.");
+        }
+        return parts[0];
+    }
+};
+
+#endif // GEOMETRY_H

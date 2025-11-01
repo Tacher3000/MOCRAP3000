@@ -4,16 +4,21 @@
 #include <QWidget>
 #include <QGraphicsView>
 #include <QVBoxLayout>
+#include <QGraphicsScene>
+#include <QWheelEvent>
+#include <QMouseEvent>
+#include "../core/layoutstructures.h"
+#include "viewerwidget.h"
 
 class LayoutViewerWidget : public QWidget {
     Q_OBJECT
 
 public:
     LayoutViewerWidget(QWidget *parent = nullptr);
+    void setLayoutSolution(const NestingSolution& solution);
 
 private:
-    QGraphicsView *view;
-
+    CustomGraphicsView *view;
     QVBoxLayout *layout;
 };
 

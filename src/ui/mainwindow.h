@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include "../core/inputmanager.h"
+#include "../core/layoutoptimizer.h"
 
 class ParametersWidget;
 class ViewerWidget;
@@ -30,6 +31,8 @@ private:
     QSplitter *verticalSplitter;
 
     InputManager inputManager;
+    LayoutOptimizer optimizer;
+    Geometry currentGeometry;
 
     bool firstShow = true;
 
@@ -38,6 +41,7 @@ private slots:
     void saveFile();
     void saveAsFile();
     void showHelp();
+    void optimizeLayout();
 };
 
 #endif // MAINWINDOW_H

@@ -1,5 +1,6 @@
-#include "geometry.h"
+#include "geometrynormalizer.h"
 #include <cmath>
+#include <stdexcept>
 
 namespace geometry {
 Contour toContour(const LWPolyline& poly) {
@@ -11,7 +12,11 @@ Contour toContour(const LWPolyline& poly) {
         }
     }
     if ((poly.flags & 1) != 0 && !contour.points.empty()) {
-        contour.points.push_back(contour.points.front());
+        if (contour.points.back().x != contour.points.front().x ||
+            contour.points.back().y != contour.points.front().y)
+        {
+            contour.points.push_back(contour.points.front());
+        }
     }
     return contour;
 }
@@ -22,13 +27,8 @@ Polygon normalizePart(const Part& part) {
         return polygon;
     }
 
-    // В упрощенном случае берем первую LWPolyline как внешний контур
     const LWPolyline& mainPoly = part.lwpolylines[0];
     polygon.contours.push_back(toContour(mainPoly));
-
-    // TODO: Обработка отверстий (остальные LWPolyline, круги и т.д.)
-    // TODO: Триангуляция и объединение линий/дуг/кругов в контуры
-    // TODO: Вычисление bounding box
 
     if (!polygon.contours.empty() && !polygon.contours[0].points.empty()) {
         double minX = polygon.contours[0].points[0].x;

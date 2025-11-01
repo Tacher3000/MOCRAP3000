@@ -1,6 +1,9 @@
 add_library(CoreLib STATIC
     geometry.h geometry.cpp
     inputmanager.h inputmanager.cpp
+    layoutstructures.h layoutstructures.cpp
+    layoutoptimizer.h layoutoptimizer.cpp
+    geometrynormalizer.h geometrynormalizer.cpp
 
 )
 

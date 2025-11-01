@@ -6,12 +6,17 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include "../core/layoutstructures.h"
 
 class ParametersWidget : public QWidget {
     Q_OBJECT
 
 public:
     ParametersWidget(QWidget *parent = nullptr);
+    NestingParameters getNestingParameters() const;
+
+signals:
+    void optimizeRequested();
 
 private:
     QLabel *sheetSizeLabel;
