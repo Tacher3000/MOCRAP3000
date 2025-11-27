@@ -3,27 +3,26 @@
 
 #include "layoutstructures.h"
 #include "geometry.h"
+#include <QPainterPath>
 
 class LayoutOptimizer {
 public:
-    /**
-     * @brief Запуск основного алгоритма раскроя.
-     * @param rawGeometry Исходные данные геометрии (сырые детали).
-     * @param params Параметры раскроя.
-     * @return Решение раскроя.
-     */
     NestingSolution optimize(const Geometry& rawGeometry, const NestingParameters& params);
 
 private:
-    std::vector<NestingPart> buildProblem(const Geometry& rawGeometry, const NestingParameters& params);
+    struct OptimizablePart {
+        int id;
+        QPainterPath baseShape;
+        QPainterPath expandedShape;
+        double area;
+        double originalMinX, originalMinY;
+    };
 
-    NestingSolution runPlacementEngine(
-        const std::vector<NestingPart>& partsToNest,
-        const NestingSheet& sheetTemplate,
-        const std::map<int, Polygon>& partGeometryMap
-        );
-
-    Polygon expandPolygon(const Polygon& original, double offset);
+    bool placePartOnSheet(QPainterPath& sheetOccupiedRegion,
+                          const OptimizablePart& part,
+                          double sheetW, double sheetH,
+                          NestingSolution& solution,
+                          int sheetId);
 };
 
 #endif // LAYOUTOPTIMIZER_H

@@ -76,7 +76,6 @@ void ViewerWidget::setGeometry(const Geometry& geom) {
     scene->clear();
     // view->resetView();
 
-
     QPen thinPen(Qt::black);
     thinPen.setWidth(0);
 

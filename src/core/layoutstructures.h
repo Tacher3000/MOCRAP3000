@@ -5,19 +5,21 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <stdexcept>
 
 struct NestingParameters {
     double sheetWidth = 0.0;
     double sheetHeight = 0.0;
     double partSpacing = 0.0;
     double cutThickness = 0.0;
-    // int maxQuantity = 0;
+    int partCount = 1;
 
     static NestingParameters fromStrings(
         const std::string& widthStr,
         const std::string& heightStr,
         const std::string& spacingStr,
-        const std::string& thicknessStr)
+        const std::string& thicknessStr,
+        const std::string& countStr)
     {
         NestingParameters p;
         try {
@@ -25,12 +27,13 @@ struct NestingParameters {
             p.sheetHeight = std::stod(heightStr);
             p.partSpacing = std::stod(spacingStr);
             p.cutThickness = std::stod(thicknessStr);
+            p.partCount = std::stoi(countStr);
         } catch (const std::exception& e) {
             throw std::runtime_error("Invalid parameter format: " + std::string(e.what()));
         }
 
-        if (p.sheetWidth <= 0 || p.sheetHeight <= 0 || p.partSpacing < 0 || p.cutThickness < 0) {
-            throw std::runtime_error("Nesting parameters must be non-negative.");
+        if (p.sheetWidth <= 0 || p.sheetHeight <= 0 || p.partCount <= 0) {
+            throw std::runtime_error("Dimensions and count must be positive.");
         }
 
         return p;
@@ -47,7 +50,6 @@ struct NestingSheet {
     int id = 0;
     double width = 0.0;
     double height = 0.0;
-    Polygon usableArea;
 };
 
 struct PlacedPart {
@@ -63,7 +65,7 @@ struct NestingSolution {
     std::vector<NestingSheet> usedSheets;
     double utilization = 0.0;
 
-    std::map<int, Polygon> partGeometryMap;
+    std::map<int, Part> partsMap;
 };
 
 #endif // LAYOUTSTRUCTURES_H

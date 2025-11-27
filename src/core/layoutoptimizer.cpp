@@ -1,126 +1,169 @@
 #include "layoutoptimizer.h"
-#include <iostream>
+#include "geometryutils.h"
+#include <QTransform>
+#include <QDebug>
 #include <algorithm>
 #include <cmath>
 
-Polygon LayoutOptimizer::expandPolygon(const Polygon& original, double offset) {
-    Polygon expanded;
-    // TODO: Реальная реализация Minkowski Sum для расширения полигона
-    // Это сложная геометрическая операция. Для простоты здесь просто возвращаем исходный полигон.
+NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const NestingParameters& params) {
+    if (rawGeometry.parts.empty()) return {};
 
-    expanded = original;
-    return expanded;
-}
-
-std::vector<NestingPart> LayoutOptimizer::buildProblem(const Geometry& rawGeometry, const NestingParameters& params) {
-    std::vector<NestingPart> partsToNest;
-
+    NestingSolution solution;
     double offset = (params.partSpacing + params.cutThickness) / 2.0;
 
+    std::vector<OptimizablePart> partsToNest;
+    int partsCountPerUniqueGeometry = params.partCount;
+
     for (const auto& rawPart : rawGeometry.parts) {
-        if (rawPart.polygon.contours.empty()) {
-            continue;
-        }
+        solution.partsMap[rawPart.id] = rawPart;
 
-        Polygon expandedPolygon = expandPolygon(rawPart.polygon, offset);
+        QPainterPath path = geometry::partToPath(rawPart);
 
-        int requiredQuantity = 1;
-        try {
-            size_t pos = rawPart.name.find('_');
-            if (pos != std::string::npos && pos + 1 < rawPart.name.size()) {
-                requiredQuantity = std::max(1, std::stoi(rawPart.name.substr(pos + 1)));
-            } else {
-                requiredQuantity = 1;
-            }
-        } catch (...) {
-            requiredQuantity = 1;
-        }
+        if (path.isEmpty()) continue;
 
-        for (int i = 0; i < requiredQuantity; ++i) {
-            NestingPart nPart;
-            nPart.partId = rawPart.id;
-            nPart.geometry = expandedPolygon;
-            nPart.quantity = 1;
-            partsToNest.push_back(nPart);
+        QRectF bRect = path.boundingRect();
+
+        QTransform norm;
+        norm.translate(-bRect.left(), -bRect.top());
+        QPainterPath baseShape = norm.map(path);
+
+        QPainterPath expandedShape = geometry::expandPath(baseShape, offset);
+        double area = bRect.width() * bRect.height();
+
+        for(int i = 0; i < partsCountPerUniqueGeometry; ++i) {
+            partsToNest.push_back({
+                rawPart.id,
+                baseShape,
+                expandedShape,
+                area,
+                bRect.left(),
+                bRect.top()
+            });
         }
     }
 
-    return partsToNest;
-}
+    std::sort(partsToNest.begin(), partsToNest.end(), [](const auto& a, const auto& b) {
+        return a.area > b.area;
+    });
 
-// Заглушка для NFP и GA
-NestingSolution LayoutOptimizer::runPlacementEngine(
-    const std::vector<NestingPart>& partsToNest,
-    const NestingSheet& sheetTemplate,
-    const std::map<int, Polygon>& partGeometryMap
-    ) {
-    NestingSolution solution;
-    solution.partGeometryMap = partGeometryMap; // Сохраняем карту для отрисовки
+    struct SheetData {
+        int id;
+        QPainterPath occupied;
+    };
+    std::vector<SheetData> sheets;
 
-    // --- Основной цикл Генетического Алгоритма ---
-    // 1. Инициализация популяции (случайное размещение + ротация)
-    // 2. Цикл:
-    //    a. Вычисление приспособленности (Fitness): площадь/количество использованных листов
-    //    b. Селекция
-    //    c. Кроссовер (обмен генотипами - списками размещения)
-    //    d. Мутация (случайное перемещение/ротация)
-    // 3. Расчет NFP:
-    //    - Для каждой новой позиции детали 'A' относительно 'B' рассчитывается NFP(A, B).
-    //    - Проверка на коллизию: если центр 'A' находится внутри NFP(A, B), происходит коллизия.
-
-    // --- Демонстрационное размещение (не алгоритм) ---
-    double currentX = 10.0;
-    double currentY = 10.0;
-    double sheetWidth = sheetTemplate.width;
+    auto addSheet = [&]() -> SheetData& {
+        sheets.push_back({ (int)sheets.size() + 1, QPainterPath() });
+        return sheets.back();
+    };
 
     for (const auto& part : partsToNest) {
-        double partWidth = part.geometry.maxX - part.geometry.minX;
-        double partHeight = part.geometry.maxY - part.geometry.minY;
+        bool placed = false;
 
-        if (currentX + partWidth > sheetWidth - 10.0) {
-            currentX = 10.0;
-            currentY += partHeight + 10.0;
+        for (auto& sheet : sheets) {
+            if (placePartOnSheet(sheet.occupied, part, params.sheetWidth, params.sheetHeight, solution, sheet.id)) {
+                placed = true;
+                break;
+            }
         }
 
-        if (currentY + partHeight > sheetTemplate.height - 10.0) {
-            break;
+        if (!placed) {
+            auto& newSheet = addSheet();
+            if (!placePartOnSheet(newSheet.occupied, part, params.sheetWidth, params.sheetHeight, solution, newSheet.id)) {
+                qWarning() << "Part ID" << part.id << "does not fit on the sheet!";
+            }
         }
-
-        PlacedPart pPart;
-        pPart.originalPartId = part.partId;
-        pPart.sheetId = sheetTemplate.id;
-        pPart.x = currentX - part.geometry.minX;
-        pPart.y = currentY - part.geometry.minY;
-        pPart.rotation = 0.0;
-
-        solution.placedParts.push_back(pPart);
-        currentX += partWidth + 10.0;
     }
 
-    solution.usedSheets.push_back(sheetTemplate);
-    solution.utilization = static_cast<double>(solution.placedParts.size()) / partsToNest.size();
+    for (const auto& s : sheets) {
+        solution.usedSheets.push_back({s.id, params.sheetWidth, params.sheetHeight});
+    }
+
+    double totalArea = sheets.size() * params.sheetWidth * params.sheetHeight;
+    double usedArea = 0;
+
+    solution.utilization = (totalArea > 0) ? (static_cast<double>(solution.placedParts.size()) * 100.0 / totalArea) : 0.0;
 
     return solution;
 }
 
-NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const NestingParameters& params) {
-    if (rawGeometry.parts.empty()) {
-        return NestingSolution{};
+bool LayoutOptimizer::placePartOnSheet(QPainterPath& occupied, const OptimizablePart& part,
+                                       double sheetW, double sheetH,
+                                       NestingSolution& solution, int sheetId)
+{
+    const double gridStep = 5.0;
+    const std::vector<double> rotations = {0.0, 90.0, 180.0, 270.0};
+
+    struct Position {
+        double x, y, rot;
+        double penalty;
+    };
+
+    Position bestPos = {0, 0, 0, std::numeric_limits<double>::max()};
+    bool found = false;
+
+    for (double rot : rotations) {
+        QTransform t;
+        t.rotate(rot);
+
+
+        QPainterPath rotExpanded = t.map(part.expandedShape);
+        QRectF rRect = rotExpanded.boundingRect();
+
+        QTransform align;
+        align.translate(-rRect.left(), -rRect.top());
+        QPainterPath checkShape = align.map(rotExpanded);
+
+        double width = rRect.width();
+        double height = rRect.height();
+
+        if (width > sheetW || height > sheetH) continue;
+
+        for (double y = 0; y <= sheetH - height; y += gridStep) {
+            if ((y * sheetW) > bestPos.penalty) break;
+
+            for (double x = 0; x <= sheetW - width; x += gridStep) {
+                double penalty = y * sheetW + x;
+
+                if (penalty >= bestPos.penalty) continue;
+
+                if (occupied.intersects(QRectF(x, y, width, height))) {
+                    QPainterPath placed = checkShape.translated(x, y);
+                    if (occupied.intersects(placed)) {
+                        continue; // Занято
+                    }
+                }
+
+                bestPos = {x, y, rot, penalty};
+                found = true;
+
+                goto next_rotation;
+            }
+        }
+    next_rotation:;
     }
 
-    std::vector<NestingPart> partsToNest = buildProblem(rawGeometry, params);
+    if (found) {
+        PlacedPart pp;
+        pp.originalPartId = part.id;
+        pp.sheetId = sheetId;
+        pp.x = bestPos.x;
+        pp.y = bestPos.y;
+        pp.rotation = bestPos.rot;
+        solution.placedParts.push_back(pp);
 
-    std::map<int, Polygon> originalGeometryMap;
-    for (const auto& part : rawGeometry.parts) {
-        originalGeometryMap[part.id] = part.polygon;
+        QTransform t;
+        t.rotate(bestPos.rot);
+        QPainterPath rotExpanded = t.map(part.expandedShape);
+        QRectF rRect = rotExpanded.boundingRect();
+
+        QTransform finalT;
+        finalT.translate(bestPos.x - rRect.left(), bestPos.y - rRect.top());
+        QPainterPath placedShape = finalT.map(rotExpanded);
+
+        occupied = occupied.united(placedShape);
+        return true;
     }
 
-    NestingSheet sheetTemplate;
-    sheetTemplate.id = 1;
-    sheetTemplate.width = params.sheetWidth;
-    sheetTemplate.height = params.sheetHeight;
-
-    NestingSolution result = runPlacementEngine(partsToNest, sheetTemplate, originalGeometryMap);
-
-    return result;
+    return false;
 }

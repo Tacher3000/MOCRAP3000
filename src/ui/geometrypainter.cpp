@@ -1,4 +1,5 @@
 #include "geometrypainter.h"
+#include "geometryutils.h"
 #include <QGraphicsLineItem>
 #include <QGraphicsEllipseItem>
 #include <QGraphicsPathItem>
@@ -9,10 +10,11 @@
 #include <QDebug>
 #include <QTransform>
 
-void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QPen& pen) {
+void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QPen& pen, const QTransform& transform) {
     for (const auto& line : part.lines) {
         QGraphicsLineItem* item = scene->addLine(line.start.x, line.start.y, line.end.x, line.end.y);
         item->setPen(pen);
+        item->setTransform(transform);
     }
 
     for (const auto& arc : part.arcs) {
@@ -38,6 +40,7 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
 
         QGraphicsPathItem* item = scene->addPath(path);
         item->setPen(pen);
+        item->setTransform(transform);
     }
 
     for (const auto& circle : part.circles) {
@@ -48,6 +51,7 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
             circle.radius * 2.0
             );
         item->setPen(pen);
+        item->setTransform(transform);
     }
 
     for (const auto& poly : part.lwpolylines) {
@@ -106,90 +110,86 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
         }
         QGraphicsPathItem* item = scene->addPath(path);
         item->setPen(pen);
+        item->setTransform(transform);
     }
 }
 
-void GeometryPainter::drawGeometry(QGraphicsScene *scene, const Geometry& geom, const QPen& pen) {
-    if (geom.parts.empty()) {
-        qDebug() << "GeometryPainter: No geometry parts to display.";
-        return;
-    }
+// void GeometryPainter::drawGeometry(QGraphicsScene *scene, const Geometry& geom, const QPen& pen) {
+//     if (geom.parts.empty()) {
+//         qDebug() << "GeometryPainter: No geometry parts to display.";
+//         return;
+//     }
 
-    try {
-        const Part& singlePart = geom.getSinglePart();
-        drawPart(scene, singlePart, pen);
-    } catch (const std::runtime_error& e) {
-        qWarning() << "Error in GeometryPainter::drawGeometry:" << e.what();
-    }
+//     try {
+//         const Part& singlePart = geom.getSinglePart();
+//         drawPart(scene, singlePart, pen);
+//     } catch (const std::runtime_error& e) {
+//         qWarning() << "Error in GeometryPainter::drawGeometry:" << e.what();
+//     }
+// }
+
+void GeometryPainter::drawGeometry(QGraphicsScene *scene, const Geometry& geom, const QPen& pen) {
+    if (geom.parts.empty()) return;
+    drawPart(scene, geom.parts[0], pen, QTransform());
 }
 
 void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSolution& solution) {
-    QPen sheetPen(Qt::darkGray);
-    sheetPen.setWidth(5);
-    QBrush sheetBrush(QColor(240, 240, 240));
+    if (solution.usedSheets.empty()) return;
 
-    QPen partPen(Qt::blue);
-    partPen.setWidth(0);
-    QBrush partBrush(QColor(173, 216, 230, 150));
+    QPen sheetPen(Qt::black); sheetPen.setWidth(0);
+    QBrush sheetBrush(Qt::NoBrush);
+
+    QPen partPen(Qt::blue); partPen.setWidth(0);
 
     double currentSheetOffsetX = 0.0;
+    const double margin = 50.0;
 
+    // 1. Рисуем листы
     for (const auto& sheet : solution.usedSheets) {
-        QGraphicsRectItem* sheetRect = scene->addRect(
-            0, 0, sheet.width, sheet.height,
-            sheetPen, sheetBrush
-            );
-        sheetRect->setPos(currentSheetOffsetX, 0);
-
-        QGraphicsTextItem* sheetText = scene->addText(QString("Лист %1\nЭффективность: %2%").arg(sheet.id).arg(solution.utilization * 100.0, 0, 'f', 2));
-        sheetText->setPos(currentSheetOffsetX + 10, 10);
-
-        currentSheetOffsetX += sheet.width + 50.0;
+        scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, sheetBrush);
+        QGraphicsTextItem* t = scene->addText(QString("Лист %1").arg(sheet.id));
+        t->setPos(currentSheetOffsetX, -25);
+        currentSheetOffsetX += sheet.width + margin;
     }
 
-    double sheetOffsetX = 0.0;
-    if (!solution.usedSheets.empty()) {
-        sheetOffsetX = (solution.usedSheets.front().width + 50.0);
-    }
+    double sheetStepX = 0;
+    if (!solution.usedSheets.empty()) sheetStepX = solution.usedSheets[0].width + margin;
 
     for (const auto& placedPart : solution.placedParts) {
-        auto it = solution.partGeometryMap.find(placedPart.originalPartId);
-        if (it == solution.partGeometryMap.end()) {
-            qWarning() << "Error: Geometry not found for part ID:" << placedPart.originalPartId;
-            continue;
-        }
+        auto it = solution.partsMap.find(placedPart.originalPartId);
+        if (it == solution.partsMap.end()) continue;
 
-        const Polygon& polygon = it->second;
+        const Part& originalPart = it->second;
 
-        double currentSheetOffset = 0.0;
-        if (placedPart.sheetId > 1) {
-            currentSheetOffset = (placedPart.sheetId - 1) * sheetOffsetX;
-        }
-
-        QPainterPath path;
-        for (const auto& contour : polygon.contours) {
-            if (contour.points.empty()) continue;
-
-            path.moveTo(contour.points.front().x, contour.points.front().y);
-            for (size_t i = 1; i < contour.points.size(); ++i) {
-                path.lineTo(contour.points[i].x, contour.points[i].y);
-            }
-        }
-
-        QGraphicsPathItem* pathItem = scene->addPath(path);
-        pathItem->setPen(partPen);
-        pathItem->setBrush(partBrush);
+        QPainterPath tempPath = geometry::partToPath(originalPart);
+        QRectF origRect = tempPath.boundingRect();
 
         QTransform transform;
-        transform.translate(currentSheetOffset + placedPart.x, placedPart.y);
-        transform.rotate(placedPart.rotation);
 
-        pathItem->setTransform(transform);
+        transform.translate(-origRect.left(), -origRect.top());
 
-        double partW = polygon.maxX - polygon.minX;
-        double partH = polygon.maxY - polygon.minY;
+        QTransform rotationMatrix;
+        rotationMatrix.rotate(placedPart.rotation);
 
-        QGraphicsTextItem* idText = scene->addText(QString::number(placedPart.originalPartId));
-        idText->setPos(currentSheetOffset + placedPart.x + partW / 2.0, placedPart.y + partH / 2.0);
+        QRectF rotatedRect = rotationMatrix.mapRect(QRectF(0, 0, origRect.width(), origRect.height()));
+        QPainterPath normPath = QTransform::fromTranslate(-origRect.left(), -origRect.top()).map(tempPath);
+        QPainterPath rotPath = rotationMatrix.map(normPath);
+        QRectF rRect = rotPath.boundingRect();
+
+        double alignX = -rRect.left();
+        double alignY = -rRect.top();
+
+        QTransform finalTransform;
+
+        double sheetOffset = (placedPart.sheetId - 1) * sheetStepX;
+        finalTransform.translate(sheetOffset + placedPart.x, placedPart.y);
+
+        finalTransform.translate(alignX, alignY);
+
+        finalTransform.rotate(placedPart.rotation);
+
+        finalTransform.translate(-origRect.left(), -origRect.top());
+
+        drawPart(scene, originalPart, partPen, finalTransform);
     }
 }
