@@ -136,60 +136,99 @@ void GeometryPainter::drawGeometry(QGraphicsScene *scene, const Geometry& geom, 
 void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSolution& solution) {
     if (solution.usedSheets.empty()) return;
 
+    // --- Настройка стилей ---
     QPen sheetPen(Qt::black); sheetPen.setWidth(0);
-    QBrush sheetBrush(Qt::NoBrush);
-
     QPen partPen(Qt::blue); partPen.setWidth(0);
+
+    QPen debugPen(Qt::red); debugPen.setWidth(0);
+    debugPen.setStyle(Qt::DashLine);
+    QBrush debugBrush(QColor(255, 0, 0, 50));
+
+    // Параметры для расчета "красной зоны" (должны совпадать с Optimizer)
+    double spacing = 5.0;
+    double thickness = 2.0;
+    double offset = (spacing + thickness) / 2.0;
 
     double currentSheetOffsetX = 0.0;
     const double margin = 50.0;
 
     // 1. Рисуем листы
     for (const auto& sheet : solution.usedSheets) {
-        scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, sheetBrush);
+        scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, Qt::NoBrush);
         QGraphicsTextItem* t = scene->addText(QString("Лист %1").arg(sheet.id));
-        t->setPos(currentSheetOffsetX, -25);
+        t->setPos(currentSheetOffsetX, -30);
         currentSheetOffsetX += sheet.width + margin;
     }
 
     double sheetStepX = 0;
-    if (!solution.usedSheets.empty()) sheetStepX = solution.usedSheets[0].width + margin;
+    if (!solution.usedSheets.empty()) {
+        sheetStepX = solution.usedSheets[0].width + margin;
+    }
 
+    // 2. Рисуем детали (Синие + Красные призраки)
     for (const auto& placedPart : solution.placedParts) {
         auto it = solution.partsMap.find(placedPart.originalPartId);
         if (it == solution.partsMap.end()) continue;
-
         const Part& originalPart = it->second;
 
-        QPainterPath tempPath = geometry::partToPath(originalPart);
-        QRectF origRect = tempPath.boundingRect();
+        // --- ЭТАП 1: Подготовка геометрии (Повторяем логику Optimizer) ---
 
-        QTransform transform;
+        // 1. Исходный контур и его нормализация
+        QPainterPath rawPath = geometry::partToPath(originalPart);
+        QRectF rawRect = rawPath.boundingRect();
 
-        transform.translate(-origRect.left(), -origRect.top());
+        // Матрица нормализации: сдвигает TopLeft исходной детали в (0,0)
+        QTransform normT = QTransform::fromTranslate(-rawRect.left(), -rawRect.top());
+        QPainterPath baseShape = normT.map(rawPath); // Деталь в (0,0)
 
-        QTransform rotationMatrix;
-        rotationMatrix.rotate(placedPart.rotation);
+        // 2. Создаем "толстую" версию (для расчета коллизий)
+        QPainterPath expandedShape = geometry::expandPath(baseShape, offset);
 
-        QRectF rotatedRect = rotationMatrix.mapRect(QRectF(0, 0, origRect.width(), origRect.height()));
-        QPainterPath normPath = QTransform::fromTranslate(-origRect.left(), -origRect.top()).map(tempPath);
-        QPainterPath rotPath = rotationMatrix.map(normPath);
-        QRectF rRect = rotPath.boundingRect();
+        // 3. Поворот
+        QTransform rotT;
+        rotT.rotate(placedPart.rotation);
 
-        double alignX = -rRect.left();
-        double alignY = -rRect.top();
+        // Поворачиваем "толстую" фигуру, чтобы узнать, как изменился её BoundingBox
+        QPainterPath rotatedExpanded = rotT.map(expandedShape);
+        QRectF rotRect = rotatedExpanded.boundingRect();
 
-        QTransform finalTransform;
+        // 4. ВЫЧИСЛЕНИЕ СДВИГА (ALIGNMENT) - Самое важное!
+        // После поворота TopLeft угол может стать отрицательным (или сместиться).
+        // Нам нужно вернуть его в (0,0), так как Optimizer выдает координаты относительно TopLeft.
+        double alignX = -rotRect.left();
+        double alignY = -rotRect.top();
+        QTransform alignT = QTransform::fromTranslate(alignX, alignY);
 
+        // 5. Размещение на листе
         double sheetOffset = (placedPart.sheetId - 1) * sheetStepX;
-        finalTransform.translate(sheetOffset + placedPart.x, placedPart.y);
+        double finalX = sheetOffset + placedPart.x;
+        double finalY = placedPart.y;
+        QTransform placeT = QTransform::fromTranslate(finalX, finalY);
 
-        finalTransform.translate(alignX, alignY);
+        // --- ЭТАП 2: Сборка итоговой матрицы ---
 
-        finalTransform.rotate(placedPart.rotation);
+        // Полная матрица трансформации = Norm -> Rot -> Align -> Place
+        // Порядок перемножения в Qt: A * B означает "Сначала примени A, потом B" (если применять к точке)
+        // Но QTransform перемножаются как (T_last * ... * T_first).
+        // Проще всего задать цепочку трансформаций логически:
 
-        finalTransform.translate(-origRect.left(), -origRect.top());
+        QTransform finalMatrix = normT * rotT * alignT * placeT;
 
-        drawPart(scene, originalPart, partPen, finalTransform);
+        // --- ЭТАП 3: Отрисовка ---
+
+        // А) Рисуем Синюю (чистовую) деталь
+        // Применяем полную матрицу к исходной детали
+        // (drawPart внутри делает scene->addPath(path * transform))
+        drawPart(scene, originalPart, partPen, finalMatrix);
+
+        // Б) Рисуем Красного призрака (Отладка)
+        // Чтобы нарисовать его точно там же, берем baseShape (который уже нормализован),
+        // расширяем его и прогоняем через оставшуюся часть матрицы (без normT, т.к. уже нормализован)
+
+        QTransform debugMatrix = rotT * alignT * placeT;
+
+        // Берем нормализованную форму, расширяем её (получаем expandedShape в 0,0)
+        // И применяем к ней поворот, выравнивание и размещение.
+        scene->addPath(debugMatrix.map(expandedShape), debugPen, debugBrush);
     }
 }

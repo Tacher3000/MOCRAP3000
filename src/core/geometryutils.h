@@ -7,8 +7,8 @@
 
 namespace geometry {
 
-Contour toContour(const LWPolyline& poly);
-Polygon normalizePart(const Part& part);
+// Contour toContour(const LWPolyline& poly);
+// Polygon normalizePart(const Part& part);
 
 QPolygonF toQPolygon(const Contour& contour);
 QPainterPath toQPainterPath(const Polygon& polygon);

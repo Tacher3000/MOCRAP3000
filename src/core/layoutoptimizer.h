@@ -22,7 +22,8 @@ private:
                           const OptimizablePart& part,
                           double sheetW, double sheetH,
                           NestingSolution& solution,
-                          int sheetId);
+                          int sheetId,
+                          double gridStep);
 };
 
 #endif // LAYOUTOPTIMIZER_H
