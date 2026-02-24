@@ -64,8 +64,11 @@ struct NestingSolution {
     std::vector<PlacedPart> placedParts;
     std::vector<NestingSheet> usedSheets;
     double utilization = 0.0;
+    int generation = 0;
 
     std::map<int, Part> partsMap;
 };
+
+
 
 #endif // LAYOUTSTRUCTURES_H

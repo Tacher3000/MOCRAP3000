@@ -65,6 +65,6 @@ NestingParameters ParametersWidget::getNestingParameters() const {
         sheetHeight->text().toStdString(),
         partSpacing->text().toStdString(),
         cutThickness->text().toStdString(),
-        partCount->text().toStdString() // Добавлено чтение количества
+        partCount->text().toStdString()
         );
 }
