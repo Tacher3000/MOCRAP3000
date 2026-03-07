@@ -1,50 +1,46 @@
 #include "parameterswidget.h"
-#include <QHBoxLayout>
 #include <QDoubleValidator>
+#include <QGroupBox>
+#include <QDialogButtonBox>
+#include <QPushButton>
 
-ParametersWidget::ParametersWidget(QWidget *parent) : QWidget(parent) {
+ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
+    setWindowTitle(tr("Настройки раскроя"));
+    setModal(true);
+    setMinimumWidth(350);
+
     layout = new QVBoxLayout(this);
     layout->setContentsMargins(10, 10, 10, 10);
 
-    sheetSizeLabel = new QLabel(tr("Размер листа (ширина x высота):"), this);
-    sheetSizeLabel->setStyleSheet("font-size: 16px; padding: 5px;");
-    layout->addWidget(sheetSizeLabel);
-    QHBoxLayout *sheetLayout = new QHBoxLayout();
+    QGroupBox *sheetGroup = new QGroupBox(tr("Размер листа (мм)"), this);
+    QHBoxLayout *sheetLayout = new QHBoxLayout(sheetGroup);
     sheetWidth = new QLineEdit(tr("1000"), this);
-    sheetWidth->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
     sheetHeight = new QLineEdit(tr("2000"), this);
-    sheetHeight->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
     sheetLayout->addWidget(sheetWidth);
     sheetLayout->addWidget(new QLabel("x", this));
     sheetLayout->addWidget(sheetHeight);
-    layout->addLayout(sheetLayout);
 
-    partSpacingLabel = new QLabel(tr("Расстояние между деталями:"), this);
-    partSpacingLabel->setStyleSheet("font-size: 16px; padding: 5px;");
-    layout->addWidget(partSpacingLabel);
+    QGroupBox *spacingGroup = new QGroupBox(tr("Отступы (мм)"), this);
+    QHBoxLayout *spacingLayout = new QHBoxLayout(spacingGroup);
+
+    spacingLayout->addWidget(new QLabel(tr("Между деталями:")));
     partSpacing = new QLineEdit(tr("5"), this);
-    partSpacing->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
-    layout->addWidget(partSpacing);
+    spacingLayout->addWidget(partSpacing);
 
-    cutThicknessLabel = new QLabel(tr("Толщина реза:"), this);
-    cutThicknessLabel->setStyleSheet("font-size: 16px; padding: 5px;");
-    layout->addWidget(cutThicknessLabel);
+    spacingLayout->addWidget(new QLabel(tr("Толщина реза:")));
     cutThickness = new QLineEdit(tr("2"), this);
-    cutThickness->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
-    layout->addWidget(cutThickness);
+    spacingLayout->addWidget(cutThickness);
 
-    partCountLabel = new QLabel(tr("Количество деталей:"), this);
-    partCountLabel->setStyleSheet("font-size: 16px; padding: 5px;");
-    layout->addWidget(partCountLabel);
-    partCount = new QLineEdit(tr("10"), this);
-    partCount->setStyleSheet("font-size: 16px; padding: 5px; min-height: 30px;");
-    layout->addWidget(partCount);
-
-    optimizeButton = new QPushButton(tr("Запустить оптимизацию"), this);
-    optimizeButton->setStyleSheet("font-size: 18px; padding: 10px 20px; margin-top: 20px;");
-    layout->addWidget(optimizeButton);
-
+    layout->addWidget(sheetGroup);
+    layout->addWidget(spacingGroup);
     layout->addStretch();
+
+    QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
+    buttonBox->button(QDialogButtonBox::Cancel)->setText(tr("Закрыть"));
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    layout->addWidget(buttonBox);
 
     QDoubleValidator *validator = new QDoubleValidator(this);
     validator->setBottom(0.0);
@@ -52,11 +48,6 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QWidget(parent) {
     sheetHeight->setValidator(validator);
     partSpacing->setValidator(validator);
     cutThickness->setValidator(validator);
-    partCount->setValidator(new QIntValidator(1, 99999, this));
-
-    connect(optimizeButton, &QPushButton::clicked, this, &ParametersWidget::optimizeRequested);
-
-    setLayout(layout);
 }
 
 NestingParameters ParametersWidget::getNestingParameters() const {
@@ -64,7 +55,6 @@ NestingParameters ParametersWidget::getNestingParameters() const {
         sheetWidth->text().toStdString(),
         sheetHeight->text().toStdString(),
         partSpacing->text().toStdString(),
-        cutThickness->text().toStdString(),
-        partCount->text().toStdString()
+        cutThickness->text().toStdString()
         );
 }

@@ -12,14 +12,13 @@ struct NestingParameters {
     double sheetHeight = 0.0;
     double partSpacing = 0.0;
     double cutThickness = 0.0;
-    int partCount = 1;
+    // partCount удален, так как количество теперь настраивается для каждой детали в UI
 
     static NestingParameters fromStrings(
         const std::string& widthStr,
         const std::string& heightStr,
         const std::string& spacingStr,
-        const std::string& thicknessStr,
-        const std::string& countStr)
+        const std::string& thicknessStr)
     {
         NestingParameters p;
         try {
@@ -27,13 +26,12 @@ struct NestingParameters {
             p.sheetHeight = std::stod(heightStr);
             p.partSpacing = std::stod(spacingStr);
             p.cutThickness = std::stod(thicknessStr);
-            p.partCount = std::stoi(countStr);
         } catch (const std::exception& e) {
             throw std::runtime_error("Invalid parameter format: " + std::string(e.what()));
         }
 
-        if (p.sheetWidth <= 0 || p.sheetHeight <= 0 || p.partCount <= 0) {
-            throw std::runtime_error("Dimensions and count must be positive.");
+        if (p.sheetWidth <= 0 || p.sheetHeight <= 0) {
+            throw std::runtime_error("Dimensions must be positive.");
         }
 
         return p;
@@ -68,7 +66,5 @@ struct NestingSolution {
 
     std::map<int, Part> partsMap;
 };
-
-
 
 #endif // LAYOUTSTRUCTURES_H

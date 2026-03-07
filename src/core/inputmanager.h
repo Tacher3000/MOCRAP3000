@@ -15,6 +15,9 @@ public:
      * @return Загруженная структура Geometry.
      */
     Geometry loadDxf(const std::string& filePath);
+
+private:
+    int m_globalPartId = 0; // Глобальный счетчик уникальных ID
 };
 
 #endif // INPUTMANAGER_H

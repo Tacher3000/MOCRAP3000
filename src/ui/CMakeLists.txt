@@ -6,6 +6,7 @@ add_library(UiLib STATIC
     viewerwidget.h viewerwidget.cpp
     layoutviewerwidget.h layoutviewerwidget.cpp
     geometrypainter.h geometrypainter.cpp
+    partlistwidget.h partlistwidget.cpp
 
 )
 

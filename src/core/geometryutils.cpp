@@ -60,7 +60,9 @@ QPolygonF toQPolygon(const Contour& contour) {
 
 QPainterPath toQPainterPath(const Polygon& polygon) {
     QPainterPath path;
+
     path.setFillRule(Qt::OddEvenFill);
+
     for (const auto& contour : polygon.contours) {
         QPolygonF qPoly = toQPolygon(contour);
         if (!qPoly.isClosed() && !qPoly.isEmpty()) {
@@ -68,31 +70,26 @@ QPainterPath toQPainterPath(const Polygon& polygon) {
         }
         path.addPolygon(qPoly);
     }
-    return path.simplified();
+
+    return path;
 }
 
 
 
 QPainterPath partToPath(const Part& part) {
     QPainterPath path;
-    // WindingFill важен для правильного объединения перекрывающихся частей
     path.setFillRule(Qt::WindingFill);
 
-    // 1. Линии
-    // ВАЖНО: Каждая линия добавляется отдельно через moveTo.
-    // Это предотвращает соединение конца списка линий с началом списка дуг.
     for (const auto& line : part.lines) {
         path.moveTo(line.start.x, line.start.y);
         path.lineTo(line.end.x, line.end.y);
     }
 
-    // 2. Окружности
     for (const auto& circle : part.circles) {
         path.addEllipse(QPointF(circle.center.x, circle.center.y),
                         circle.radius, circle.radius);
     }
 
-    // 3. Дуги
     for (const auto& arc : part.arcs) {
         QRectF rect(arc.center.x - arc.radius, arc.center.y - arc.radius,
                     arc.radius * 2, arc.radius * 2);
@@ -109,13 +106,10 @@ QPainterPath partToPath(const Part& part) {
             span = endAngle - startAngle;
         }
 
-        // ВАЖНО: arcMoveTo делает moveTo в начало дуги.
-        // Это разрывает связь с предыдущим элементом, что нам и нужно.
         path.arcMoveTo(rect, startAngle);
         path.arcTo(rect, startAngle, span);
     }
 
-    // 4. LWPolylines
     for (const auto& poly : part.lwpolylines) {
         if (poly.vertices.empty()) continue;
 
@@ -124,7 +118,6 @@ QPainterPath partToPath(const Part& part) {
 
         for (size_t i = 0; i < poly.vertices.size(); ++i) {
             size_t nextIdx = (i + 1) % poly.vertices.size();
-            // Если полилиния не замкнута, не соединяем последний с первым
             if (!((poly.flags & 1)) && i == poly.vertices.size() - 1) break;
 
             const auto& p1 = poly.vertices[i];
@@ -133,12 +126,10 @@ QPainterPath partToPath(const Part& part) {
             if (std::abs(p1.bulge) < 1e-6) {
                 polyPath.lineTo(p2.x, p2.y);
             } else {
-                // Расчет дуги по bulge
                 double dx = p2.x - p1.x;
                 double dy = p2.y - p1.y;
                 double dist = std::sqrt(dx*dx + dy*dy);
 
-                // Избегаем деления на ноль
                 if (dist < 1e-9) continue;
 
                 double radius = dist * (1 + p1.bulge*p1.bulge) / (4 * std::abs(p1.bulge));
@@ -156,12 +147,9 @@ QPainterPath partToPath(const Part& part) {
         if (poly.flags & 1) {
             polyPath.closeSubpath();
         }
-        // Добавляем полилинию как отдельный независимый путь
         path.addPath(polyPath);
     }
 
-    // НЕ делаем simplified() здесь, так как это удалит "лишние" линии внутри,
-    // а нам нужно сохранить всю геометрию для expandPath.
     return path;
 }
 
@@ -169,18 +157,14 @@ QPainterPath expandPath(const QPainterPath& path, double offset) {
     if (std::abs(offset) < 1e-6) return path;
 
     QPainterPathStroker stroker;
-    stroker.setWidth(offset * 2.0); // *2 потому что stroke идет в обе стороны от линии
-    stroker.setJoinStyle(Qt::RoundJoin); // Скругляем углы соединения
-    stroker.setCapStyle(Qt::RoundCap);   // Скругляем концы линий
+    stroker.setWidth(offset * 2.0);
+    stroker.setJoinStyle(Qt::RoundJoin);
+    stroker.setCapStyle(Qt::RoundCap);
 
-    // Создаем "жирную" обводку всех линий
     QPainterPath stroke = stroker.createStroke(path);
 
-    // Объединяем исходный путь с обводкой
     QPainterPath result = path + stroke;
 
-    // САМОЕ ВАЖНОЕ: simplified() сливает все пересекающиеся "сосиски" в одну форму.
-    // Это убирает пересечения внутри детали и создает корректную "красную зону".
     return result.simplified();
 }
 

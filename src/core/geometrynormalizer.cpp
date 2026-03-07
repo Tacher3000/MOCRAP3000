@@ -5,38 +5,32 @@
 #include <list>
 #include <limits>
 
-// Гарантируем наличие M_PI (стандарт C++ не гарантирует его без _USE_MATH_DEFINES в MSVC, но в MinGW обычно есть)
+// Гарантируем наличие M_PI
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 namespace geometry {
 
-// Константы для точности
-static constexpr double EPSILON = 1e-5;
-static constexpr double ANGLE_TOLERANCE = 0.1; // Максимальное отклонение хорды (для дискретизации)
-
-// --- Вспомогательные структуры и функции ---
+static constexpr double EPSILON = 0.01;
+static constexpr double ANGLE_TOLERANCE = 0.01;
 
 struct Segment {
     Point start;
     Point end;
-    std::vector<Point> intermediatePoints; // Точки между start и end (для дуг)
+    std::vector<Point> intermediatePoints;
     bool used = false;
 };
 
-// Функция расчета расстояния (квадрат)
 double distSq(const Point& a, const Point& b) {
     double dx = a.x - b.x;
     double dy = a.y - b.y;
     return dx*dx + dy*dy;
 }
 
-// Генерация точек дуги по центру, радиусу и углам
 std::vector<Point> generateArcPoints(double cx, double cy, double r, double startAng, double endAng, bool ccw) {
     std::vector<Point> points;
 
-    // Нормализация углов
     if (ccw) {
         if (endAng < startAng) endAng += 2 * M_PI;
     } else {
@@ -44,19 +38,17 @@ std::vector<Point> generateArcPoints(double cx, double cy, double r, double star
     }
 
     double sweep = std::abs(endAng - startAng);
-    // Адаптивное количество шагов на основе радиуса и точности
-    // s = 2 * r * sin(step / 2) <= tolerance => step approx 2 * acos(1 - tol/r)
-    // Защита от acos(>1)
+
     double val = 1.0 - ANGLE_TOLERANCE / r;
     if (val < -1.0) val = -1.0;
     if (val > 1.0) val = 1.0;
 
     double stepAngle = 2.0 * std::acos(val);
-    if (std::isnan(stepAngle) || stepAngle < 0.01) stepAngle = 0.05; // Защита от слишком малого шага
+    if (std::isnan(stepAngle) || stepAngle < 0.01) stepAngle = 0.05;
 
     int steps = std::max(4, static_cast<int>(std::ceil(sweep / stepAngle)));
 
-    for (int i = 1; i < steps; ++i) { // start и end добавляются снаружи
+    for (int i = 1; i < steps; ++i) {
         double t = static_cast<double>(i) / steps;
         double angle = startAng + (endAng - startAng) * t;
         points.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
@@ -76,20 +68,15 @@ std::vector<Point> processBulge(const Point& p1, const Point& p2, double bulge) 
     double radius = chordLen * (1 + bulge*bulge) / (4 * std::abs(bulge));
     double theta = 4 * std::atan(std::abs(bulge));
 
-    // Находим середину хорды
     double mx = (p1.x + p2.x) / 2.0;
     double my = (p1.y + p2.y) / 2.0;
 
-    // Высота сегмента и направление
     double side = (bulge > 0) ? 1.0 : -1.0;
-    // Если дуга > 180 (abs(bulge) > 1), центр лежит по другую сторону хорды
     if (std::abs(bulge) > 1.0) side = -side;
 
-    // Расстояние от хорды до центра: h = sqrt(r^2 - (d/2)^2)
     double halfChord = chordLen / 2.0;
     double distToCenter = std::sqrt(std::max(0.0, radius*radius - halfChord*halfChord));
 
-    // Нормаль к хорде (-dy, dx) / len
     double nx = -dy / chordLen;
     double ny = dx / chordLen;
 
@@ -103,7 +90,6 @@ std::vector<Point> processBulge(const Point& p1, const Point& p2, double bulge) 
     return generateArcPoints(cx, cy, radius, startAng, endAng, ccw);
 }
 
-// Преобразование одной полилинии в контур
 Contour toContour(const LWPolyline& poly) {
     Contour contour;
     if (poly.vertices.empty()) return contour;
@@ -111,7 +97,6 @@ Contour toContour(const LWPolyline& poly) {
     bool closed = (poly.flags & 1);
     size_t count = poly.vertices.size();
 
-    // Если замкнута, обрабатываем последнее ребро (last -> first)
     size_t segments = closed ? count : count - 1;
 
     for (size_t i = 0; i < segments; ++i) {
@@ -129,12 +114,10 @@ Contour toContour(const LWPolyline& poly) {
         }
     }
 
-    // Если не замкнута, добавляем последнюю точку
     if (!closed) {
         const auto& last = poly.vertices.back();
         contour.points.push_back({last.x, last.y});
     } else {
-        // Гарантируем физическое замыкание (первая точка == последняя)
         if (!contour.points.empty() &&
             (std::abs(contour.points.front().x - contour.points.back().x) > EPSILON ||
              std::abs(contour.points.front().y - contour.points.back().y) > EPSILON))
@@ -145,46 +128,55 @@ Contour toContour(const LWPolyline& poly) {
     return contour;
 }
 
-// Сшивание разрозненных сегментов (Lines и Arcs)
 std::vector<Contour> stitchSegments(const std::vector<Segment>& inputSegments) {
     std::vector<Contour> contours;
     std::list<Segment> pool(inputSegments.begin(), inputSegments.end());
 
     while (!pool.empty()) {
-        Contour currentContour;
+        std::list<Point> currentPoints;
         auto it = pool.begin();
         Segment currentSeg = *it;
         pool.erase(it);
 
-        // Добавляем точки первого сегмента
-        currentContour.points.push_back(currentSeg.start);
-        currentContour.points.insert(currentContour.points.end(), currentSeg.intermediatePoints.begin(), currentSeg.intermediatePoints.end());
-        currentContour.points.push_back(currentSeg.end);
+        currentPoints.push_back(currentSeg.start);
+        for (const auto& p : currentSeg.intermediatePoints) currentPoints.push_back(p);
+        currentPoints.push_back(currentSeg.end);
 
-        Point currentEnd = currentSeg.end;
         bool foundNext = true;
-
         while (foundNext) {
             foundNext = false;
             for (auto searchIt = pool.begin(); searchIt != pool.end(); ++searchIt) {
-                // Проверяем начало следующего с концом текущего
+                Point currentStart = currentPoints.front();
+                Point currentEnd = currentPoints.back();
+
                 if (distSq(currentEnd, searchIt->start) < EPSILON) {
-                    currentContour.points.insert(currentContour.points.end(), searchIt->intermediatePoints.begin(), searchIt->intermediatePoints.end());
-                    currentContour.points.push_back(searchIt->end);
-                    currentEnd = searchIt->end;
+                    for (const auto& p : searchIt->intermediatePoints) currentPoints.push_back(p);
+                    currentPoints.push_back(searchIt->end);
                     pool.erase(searchIt);
                     foundNext = true;
                     break;
                 }
-                // Проверяем конец следующего с концом текущего (обратный порядок линии)
                 else if (distSq(currentEnd, searchIt->end) < EPSILON) {
-                    // Реверс сегмента
-                    std::vector<Point> revInter = searchIt->intermediatePoints;
-                    std::reverse(revInter.begin(), revInter.end());
-
-                    currentContour.points.insert(currentContour.points.end(), revInter.begin(), revInter.end());
-                    currentContour.points.push_back(searchIt->start);
-                    currentEnd = searchIt->start;
+                    for (auto rit = searchIt->intermediatePoints.rbegin(); rit != searchIt->intermediatePoints.rend(); ++rit) {
+                        currentPoints.push_back(*rit);
+                    }
+                    currentPoints.push_back(searchIt->start);
+                    pool.erase(searchIt);
+                    foundNext = true;
+                    break;
+                }
+                else if (distSq(currentStart, searchIt->end) < EPSILON) {
+                    for (auto rit = searchIt->intermediatePoints.rbegin(); rit != searchIt->intermediatePoints.rend(); ++rit) {
+                        currentPoints.push_front(*rit);
+                    }
+                    currentPoints.push_front(searchIt->start);
+                    pool.erase(searchIt);
+                    foundNext = true;
+                    break;
+                }
+                else if (distSq(currentStart, searchIt->start) < EPSILON) {
+                    for (const auto& p : searchIt->intermediatePoints) currentPoints.push_front(p);
+                    currentPoints.push_front(searchIt->end);
                     pool.erase(searchIt);
                     foundNext = true;
                     break;
@@ -192,7 +184,9 @@ std::vector<Contour> stitchSegments(const std::vector<Segment>& inputSegments) {
             }
         }
 
-        // Замыкание контура
+        Contour currentContour;
+        currentContour.points.assign(currentPoints.begin(), currentPoints.end());
+
         if (!currentContour.points.empty()) {
             if (distSq(currentContour.points.front(), currentContour.points.back()) < EPSILON) {
                 currentContour.points.back() = currentContour.points.front();
@@ -210,19 +204,9 @@ std::vector<Contour> stitchSegments(const std::vector<Segment>& inputSegments) {
 }
 
 // --- Основная функция ---
-
 Polygon normalizePart(const Part& part) {
     Polygon polygon;
 
-    // 1. Обработка LWPolylines
-    for (const auto& lw : part.lwpolylines) {
-        Contour c = toContour(lw);
-        if (c.points.size() > 2) {
-            polygon.contours.push_back(c);
-        }
-    }
-
-    // 2. Обработка Circles
     for (const auto& circ : part.circles) {
         Contour c;
         std::vector<Point> pts = generateArcPoints(circ.center.x, circ.center.y, circ.radius, 0, 2 * M_PI, true);
@@ -231,9 +215,7 @@ Polygon normalizePart(const Part& part) {
         polygon.contours.push_back(c);
     }
 
-    // 3. Сбор из линий и дуг для сшивания
     std::vector<Segment> looseSegments;
-    looseSegments.reserve(part.lines.size() + part.arcs.size());
 
     for (const auto& line : part.lines) {
         looseSegments.push_back({ {line.start.x, line.start.y}, {line.end.x, line.end.y}, {}, false });
@@ -245,11 +227,29 @@ Polygon normalizePart(const Part& part) {
         bool ccw = (arc.isCounterClockwise != 0);
 
         std::vector<Point> inter = generateArcPoints(arc.center.x, arc.center.y, arc.radius, startRad, endRad, ccw);
-
         Point pStart { arc.center.x + arc.radius * std::cos(startRad), arc.center.y + arc.radius * std::sin(startRad) };
         Point pEnd { arc.center.x + arc.radius * std::cos(endRad), arc.center.y + arc.radius * std::sin(endRad) };
-
         looseSegments.push_back({ pStart, pEnd, inter, false });
+    }
+
+    for (const auto& lw : part.lwpolylines) {
+        if (lw.vertices.size() < 2) continue;
+        bool closed = (lw.flags & 1);
+        size_t segmentsCount = closed ? lw.vertices.size() : lw.vertices.size() - 1;
+
+        for (size_t i = 0; i < segmentsCount; ++i) {
+            const auto& v1 = lw.vertices[i];
+            const auto& v2 = lw.vertices[(i + 1) % lw.vertices.size()];
+            Point p1{v1.x, v1.y};
+            Point p2{v2.x, v2.y};
+
+            if (std::abs(v1.bulge) > 1e-6) {
+                auto arcPts = processBulge(p1, p2, v1.bulge);
+                looseSegments.push_back({p1, p2, arcPts, false});
+            } else {
+                looseSegments.push_back({p1, p2, {}, false});
+            }
+        }
     }
 
     if (!looseSegments.empty()) {
@@ -257,7 +257,6 @@ Polygon normalizePart(const Part& part) {
         polygon.contours.insert(polygon.contours.end(), stitched.begin(), stitched.end());
     }
 
-    // 4. Расчет Bounding Box
     if (!polygon.contours.empty()) {
         double minX = std::numeric_limits<double>::max();
         double maxX = std::numeric_limits<double>::lowest();

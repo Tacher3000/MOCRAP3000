@@ -10,7 +10,7 @@
 #include <map>
 #include <random>
 #include <cmath>
-#include <omp.h> // Если доступен OpenMP для параллельных вычислений
+#include <omp.h>
 
 using namespace Clipper2Lib;
 
@@ -31,12 +31,12 @@ static void moveBoostSet(BoostPolygonSet& set, long long dx, long long dy) {
     namespace bp = boost::polygon;
     std::vector<BoostPolygon> polys;
     set.get(polys);
-    set.clear(); // Очищаем контейнер перед перезаписью
+    set.clear();
 
     for(auto& p : polys) {
         bp::move(p, bp::HORIZONTAL, dx);
         bp::move(p, bp::VERTICAL, dy);
-        set.insert(p); // Вставляем обратно перемещенный полигон
+        set.insert(p);
     }
 }
 
@@ -85,8 +85,7 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     qDebug() << "Params:" << params.sheetWidth << "x" << params.sheetHeight;
     if (parts.empty()) return {};
 
-    // 1. Конфигурация
-    m_config.populationSize = 20; // Небольшой размер популяции типичен для нестинга (тяжелая fitness-функция)
+    m_config.populationSize = 20;
 
     // --- КЭШИРОВАНИЕ ГЕОМЕТРИИ ---
     // Мы заранее вычисляем все возможные варианты вращения деталей.
@@ -96,7 +95,6 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     for(const auto& part : parts) {
         BoostPolygonSet base = GeometryAdapter::toBoost(part);
-        // Нормализуем базовую деталь в 0,0 (Top-Left bounding box в 0,0)
         normalizePolySet(base);
 
         rotatedPartsCache[part.id].resize(4);
@@ -112,42 +110,32 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     }
 
     qDebug() << "Инициализация первичной популяции";
-    // 2. Инициализация первичной популяции
     initializePopulation(parts, m_config.populationSize);
 
     qDebug() << "Оценка первой популяции";
-    // 3. Оценка первой популяции (расчет укладки)
     evaluatePopulation(m_population, parts, params, rotatedPartsCache);
 
-    // Поиск текущего лидера
     Individual bestInd = m_population[0];
-    // Обновляем UI первым результатом
     if (progressCallback) progressCallback(bestInd.cachedSolution);
 
-    // 4. Основной цикл поколений
     int gen = 0;
     for (; gen < m_config.maxGenerations; ++gen) {
         if (stopFlag) {
             qDebug() << "Stop requested by user at generation" << gen;
             break;
         }
-        qDebug() << "Processing Generation:" << gen; // <--- ЛОГ ПОКОЛЕНИЯ
+        qDebug() << "Processing Generation:" << gen;
 
-        // Элитизм: гарантированно сохраняем лучшего индивида
         std::vector<Individual> newPop;
         newPop.reserve(m_config.populationSize);
         newPop.push_back(bestInd);
 
-        // Генерация потомков
         while (newPop.size() < static_cast<size_t>(m_config.populationSize)) {
-            // Селекция
             Individual p1 = selection(m_population);
             Individual p2 = selection(m_population);
 
-            // Скрещивание (Crossover)
             std::pair<Individual, Individual> children = crossover(p1, p2);
 
-            // Мутация
             mutate(children.first);
             mutate(children.second);
 
@@ -158,20 +146,16 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
         m_population = std::move(newPop);
 
-        // Оценка нового поколения
         qDebug() << "Evaluating population...";
         evaluatePopulation(m_population, parts, params, rotatedPartsCache);
         qDebug() << "Evaluation finished.";
 
-        // Поиск нового лучшего
-        // Примечание: Мы ищем MIN fitness (где fitness = 1/utilization или waste),
-        // но в данной реализации fitness = 1.0/utilization, значит чем меньше, тем лучше.
-        auto it = std::max_element(m_population.begin(), m_population.end(),
+
+        auto it = std::min_element(m_population.begin(), m_population.end(),
                                    [](const Individual& a, const Individual& b) {
-                                       return a.fitness < b.fitness; // Трюк: max_element + < ищет "максимальный" по значению
+                                       return a.fitness < b.fitness;
                                    });
 
-        // Проверка на улучшение
         if (it->fitness < bestInd.fitness) {
             bestInd = *it;
             if (progressCallback) {
@@ -197,31 +181,26 @@ void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int 
     m_population.clear();
     int numParts = static_cast<int>(parts.size());
 
-    // Сортировка по площади (Adam - первый индивид)
     std::vector<std::pair<int, double>> sortedParts(numParts);
     for(int i=0; i<numParts; ++i) {
         BoostPolygonSet ps = GeometryAdapter::toBoost(parts[i]);
         sortedParts[i] = {i, boost::polygon::area(ps)};
     }
-    // Сортировка по убыванию площади
     std::sort(sortedParts.begin(), sortedParts.end(), [](auto& a, auto& b){
         return a.second > b.second;
     });
 
     Individual adam;
     adam.partIndices.resize(numParts);
-    adam.rotations.resize(numParts, 0); // По умолчанию без вращения
+    adam.rotations.resize(numParts, 0);
 
     for(int i=0; i<numParts; ++i) adam.partIndices[i] = sortedParts[i].first;
 
     m_population.push_back(adam);
 
-    // Остальные - случайные вариации
     for(int i=1; i<popSize; ++i) {
         Individual ind = adam;
-        // Shuffle - случайная перестановка порядка укладки
         std::shuffle(ind.partIndices.begin(), ind.partIndices.end(), m_rng);
-        // Случайные вращения (0..3)
         std::uniform_int_distribution<int> rotDist(0, 3);
         for(auto& r : ind.rotations) r = rotDist(m_rng);
         m_population.push_back(ind);
@@ -291,10 +270,8 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
                                           const NestingParameters& params,
                                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache)
 {
-    // Распараллеливаем цикл по индивидам
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(population.size()); ++i) {
-        // Декодируем генотип в фенотип (раскладку)
         population[i].cachedSolution = decode(population[i], parts, params, rotatedPartsCache);
 
         // Расчет Fitness.
@@ -339,29 +316,25 @@ std::pair<Individual, Individual> GeneticOptimizer::crossover(const Individual& 
     size_t end = dist(m_rng);
     if(start > end) std::swap(start, end);
 
-    // 1. Копируем сегмент от первого родителя
     for(size_t i=start; i<=end; ++i) {
         c1.partIndices[i] = p1.partIndices[i];
-        c1.rotations[i] = p1.rotations[i]; // Вращение привязано к детали
+        c1.rotations[i] = p1.rotations[i];
 
         c2.partIndices[i] = p2.partIndices[i];
         c2.rotations[i] = p2.rotations[i];
     }
 
-    // 2. Заполняем пробелы генами второго родителя
     auto fillChild = [&](Individual& child, const Individual& donor) {
-        size_t current = (end + 1) % size; // Начинаем сразу после сегмента
+        size_t current = (end + 1) % size;
         for (size_t i = 0; i < size; ++i) {
-            size_t donorIdx = (end + 1 + i) % size; // Проходим по донору циклично
+            size_t donorIdx = (end + 1 + i) % size;
             int candidate = donor.partIndices[donorIdx];
 
-            // Проверяем, есть ли уже этот ген в сегменте
             bool found = false;
             for(size_t k=start; k<=end; ++k) {
                 if(child.partIndices[k] == candidate) { found = true; break; }
             }
 
-            // Если гена нет, вставляем
             if(!found) {
                 child.partIndices[current] = candidate;
                 child.rotations[current] = donor.rotations[donorIdx];
@@ -384,25 +357,23 @@ std::pair<Individual, Individual> GeneticOptimizer::crossover(const Individual& 
  */
 void GeneticOptimizer::mutate(Individual& ind) {
     std::uniform_real_distribution<double> dist(0.0, 1.0);
-    double rate = 0.05; // 5% вероятность мутации гена
+    double rate = 0.05;
 
     size_t len = ind.partIndices.size();
     for(size_t i=0; i<len; ++i) {
         if(dist(m_rng) < rate) {
-            // Swap with next
             size_t j = (i + 1) % len;
             std::swap(ind.partIndices[i], ind.partIndices[j]);
             std::swap(ind.rotations[i], ind.rotations[j]);
         }
         if(dist(m_rng) < rate) {
-            // New random rotation
             ind.rotations[i] = std::uniform_int_distribution<int>(0, 3)(m_rng);
         }
     }
 }
 
 // ---------------------------------------------------------
-// PLACEMENT WORKER LOGIC (СЕРДЦЕ АЛГОРИТМА)
+// PLACEMENT WORKER LOGIC
 // ---------------------------------------------------------
 
 /**
@@ -439,7 +410,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
     NestingSolution solution;
 
-    // Переводим размеры листа в систему координат Boost (умножаем на 10^7)
     long long sheetWidthLocal = static_cast<long long>(params.sheetWidth * NFPCalculator::NFP_SCALE);
     long long sheetHeightLocal = static_cast<long long>(params.sheetHeight * NFPCalculator::NFP_SCALE);
 
@@ -448,36 +418,30 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         return solution;
     }
 
-    // Локальная структура для хранения состояния размещения во время расчета
     struct PlacedItem {
-        int id; // Индекс в массиве parts (не путать с Part ID)
-        int rotation; // Индекс вращения (0..3)
-        BoostPolygonSet poly; // Полигон в абсолютных координатах листа
-        long long x, y; // Координаты размещения (Top-Left bounding box)
+        int id;
+        int rotation;
+        BoostPolygonSet poly;
+        long long x, y;
     };
 
-    // Контекст листа
     struct SheetCtx {
         int id;
         std::vector<PlacedItem> placedItems;
-        // Paths64 combinedOuterNFP; // (Опционально) можно кэшировать объединение препятствий
     };
 
     std::vector<SheetCtx> sheets;
-    sheets.push_back({1, {}}); // Создаем первый пустой лист
+    sheets.push_back({1, {}});
 
-    // --- ГЛАВНЫЙ ЦИКЛ РАЗМЕЩЕНИЯ ---
     for (size_t i = 0; i < ind.partIndices.size(); ++i) {
         int partIdx = ind.partIndices[i];
         int rotIdx = ind.rotations[i];
         const Part& originalPart = parts[partIdx];
 
-        // Получаем геометрию из кэша (уже повернута и нормализована в 0,0)
         const BoostPolygonSet& partShape = rotatedPartsCache.at(originalPart.id)[rotIdx];
 
         qDebug() << "    [Decode] Placing part" << i << "(ID:" << originalPart.id << ")";
 
-        // Получаем габариты детали (BBox) для быстрой проверки
         namespace bp = boost::polygon;
         bp::rectangle_data<long long> partRect;
         bp::extents(partRect, partShape);
@@ -486,23 +450,18 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
         bool placed = false;
 
-        // Итерация по существующим листам
         for (auto& sheet : sheets) {
-            // ОПТИМИЗАЦИЯ 1: Лист пустой?
             if (sheet.placedItems.empty()) {
                 if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
-                    // Просто кладем в 0,0
                     PlacedItem newItem;
                     newItem.id = partIdx;
                     newItem.rotation = rotIdx;
                     newItem.x = 0;
                     newItem.y = 0;
-                    newItem.poly = partShape; // Копируем форму
-                    // (Она уже в 0,0, сдвигать не надо)
+                    newItem.poly = partShape;
 
                     sheet.placedItems.push_back(newItem);
 
-                    // Запись в результат
                     PlacedPart pp;
                     pp.originalPartId = originalPart.id;
                     pp.sheetId = sheet.id;
@@ -518,15 +477,11 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 }
             }
 
-            // ШАГ 1: Вычисляем Inner NFP (Допустимая зона внутри листа)
-            // Для прямоугольного листа и нормализованной детали это просто прямоугольник.
-            // BBox листа минус BBox детали.
             long long maxX = sheetWidthLocal - pW;
             long long maxY = sheetHeightLocal - pH;
 
-            if (maxX < 0 || maxY < 0) continue; // Деталь физически больше листа
+            if (maxX < 0 || maxY < 0) continue;
 
-            // Формируем путь Clipper для Inner NFP
             Path64 innerNFPPath;
             innerNFPPath.push_back(Point64(0, 0));
             innerNFPPath.push_back(Point64(maxX, 0LL));
@@ -536,7 +491,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             Paths64 innerNFPClipper;
             innerNFPClipper.push_back(innerNFPPath);
 
-            // ШАГ 2: Вычитаем препятствия (Outer NFP размещенных деталей)
             if (!sheet.placedItems.empty()) {
                 Paths64 obstacles;
                 qDebug() << "      -> Calculating NFP with" << sheet.placedItems.size() << "obstacles...";
@@ -588,7 +542,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
-                    // score = x + y * k. k должно быть маленьким, чтобы Y влиял меньше X.
                     double score = pt.x + pt.y * 0.0001;
 
                     if (score < bestScore) {
@@ -600,26 +553,17 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             }
 
             if (foundPos) {
-                // Размещаем деталь
                 PlacedItem newItem;
                 newItem.id = partIdx;
                 newItem.rotation = rotIdx;
                 newItem.x = bestPos.x;
                 newItem.y = bestPos.y;
 
-                // Для корректной работы calculateOuterNFP на следующем шаге,
-                // нам нужно, чтобы 'poly' в placedItems оставался в 0,0 (как шаблон),
-                // или мы должны хранить координаты отдельно.
-                // В данной реализации мы храним polyShape (шаблон) и координаты (x,y) отдельно.
-                // Но для визуализации/экспорта в placedItems можно было бы хранить абсолютные координаты.
-                // Здесь `newItem.poly` не используется для OuterNFP (берется из кэша),
-                // но может пригодиться для дебага.
                 newItem.poly = partShape;
                 moveBoostSet(newItem.poly, newItem.x, newItem.y);
 
                 sheet.placedItems.push_back(newItem);
 
-                // Запись в итоговое решение (конвертация обратно в double)
                 PlacedPart pp;
                 pp.originalPartId = originalPart.id;
                 pp.sheetId = sheet.id;
@@ -631,23 +575,21 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
                 placed = true;
                 qDebug() << "      -> Placed on sheet" << sheet.id << "at" << pp.x << pp.y;
-                break; // Переходим к следующей детали
+                break;
             }
-        } // конец цикла по листам
+        }
 
-        // Если деталь не поместилась ни на один лист, создаем новый
         if (!placed) {
             if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
                 SheetCtx newSheet;
                 newSheet.id = static_cast<int>(sheets.size()) + 1;
 
-                // Размещаем в 0,0
                 PlacedItem newItem;
                 newItem.id = partIdx;
                 newItem.rotation = rotIdx;
                 newItem.x = 0;
                 newItem.y = 0;
-                newItem.poly = partShape; // 0,0
+                newItem.poly = partShape;
 
                 newSheet.placedItems.push_back(newItem);
                 sheets.push_back(newSheet);
@@ -661,13 +603,11 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 solution.placedParts.push_back(pp);
                 solution.partsMap[originalPart.id] = originalPart;
             } else {
-                // Критическая ошибка: деталь больше размера листа
                 qWarning() << "Part " << originalPart.id << " does not fit on empty sheet!";
             }
         }
-    } // конец цикла по деталям
+    }
 
-    // 4. Сбор статистики (Утилизация)
     double totalArea = 0;
     double partsArea = 0;
 
@@ -678,9 +618,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         totalArea += params.sheetWidth * params.sheetHeight;
 
         for (const auto& item : sheet.placedItems) {
-            // Площадь берем из кэша (Boost возвращает double/long long Area)
             double area = boost::polygon::area(rotatedPartsCache.at(parts[item.id].id)[item.rotation]);
-            // Нормализуем площадь обратно к единицам пользователя (делим на scale^2)
             partsArea += area / (NFPCalculator::NFP_SCALE * NFPCalculator::NFP_SCALE);
         }
     }

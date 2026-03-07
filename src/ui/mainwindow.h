@@ -4,15 +4,17 @@
 #include <QMainWindow>
 #include <QThread>
 #include "../core/inputmanager.h"
-#include "../core/layoutoptimizer.h" // Для Geometry type
+#include "../core/layoutoptimizer.h"
 #include "../core/optimizationworker.h"
 
 class ParametersWidget;
 class ViewerWidget;
 class LayoutViewerWidget;
+class PartListWidget;
 class QSplitter;
 class QLabel;
 class QProgressBar;
+class QPushButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,43 +28,43 @@ protected:
 
 private slots:
     void loadFile();
+    void clearAll();
     void saveFile();
     void saveAsFile();
     void showHelp();
+    void showSettings();
 
-    // Слот запуска (UI -> Worker)
+    void onPartSelected(const Part& part);
+    void onShowAllPartsRequested();
+
     void startOptimization();
-
-    // Слоты приема результатов (Worker -> UI)
     void onOptimizationFinished(const NestingSolution &solution);
     void onOptimizationError(const QString &message);
-
-    // Слот отображения промежуточного результата
     void onOptimizationProgress(const NestingSolution &solution);
 
 signals:
-    // Сигнал для передачи данных в Worker (cross-thread)
     void startOptimizationRequested(const Geometry geometry, const NestingParameters params);
 
 private:
     void setupMenu();
     void setupStatusBar();
 
-    ParametersWidget *parameters;
+    ParametersWidget *parametersDialog;
+    PartListWidget *partList;
+    QPushButton *btnStartOptimization;
+
     ViewerWidget *viewer;
     LayoutViewerWidget *layoutViewer;
 
-    QSplitter *horizontalSplitter;
-    QSplitter *verticalSplitter;
+    QSplitter *mainSplitter;
+    QSplitter *viewersSplitter;
 
-    // Элементы UI статуса
     QLabel *statusLabel;
     QProgressBar *progressBar;
 
     InputManager inputManager;
     Geometry currentGeometry;
 
-    // Поточность
     QThread* workerThread = nullptr;
     OptimizationWorker* worker = nullptr;
 

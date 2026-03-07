@@ -20,13 +20,11 @@ using namespace Clipper2Lib;
 void NFPCalculator::convolveTwoSegments(std::vector<BoostPoint>& figure, const BoostEdge& a, const BoostEdge& b) {
     using namespace boost::polygon;
     figure.clear();
-    // Инициализируем 4 точки параллелограмма
     figure.push_back(BoostPoint(a.first));
     figure.push_back(BoostPoint(a.first));
     figure.push_back(BoostPoint(a.second));
     figure.push_back(BoostPoint(a.second));
 
-    // Сумма векторов (Minkowski sum для точек): p_new = p_a + p_b
     figure[0] = convolve(figure[0], b.second);
     figure[1] = convolve(figure[1], b.first);
     figure[2] = convolve(figure[2], b.first);
@@ -43,17 +41,14 @@ void NFPCalculator::convolveTwoPointSequences(BoostPolygonSet& result, itrT1 ab,
     BoostPolygon poly;
     ++ab;
 
-    // Проходим по всем сегментам полигона A
     for( ; ab != ae; ++ab) {
         BoostPoint prev_b = *bb;
         itrT2 tmpb = bb;
         ++tmpb;
-        // Проходим по всем сегментам полигона B
         for( ; tmpb != be; ++tmpb) {
-            // Складываем каждый сегмент с каждым
             convolveTwoSegments(vec, std::make_pair(prev_b, *tmpb), std::make_pair(prev_a, *ab));
             set_points(poly, vec.begin(), vec.end());
-            result.insert(poly); // Объединяем результат
+            result.insert(poly);
             prev_b = *tmpb;
         }
         prev_a = *ab;
@@ -85,15 +80,12 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
     b.get(b_polygons);
 
     for(std::size_t ai = 0; ai < a_polygons.size(); ++ai) {
-        // Свертка контура A со всеми контурами B
         convolvePointSequenceWithPolygons(result, begin_points(a_polygons[ai]), end_points(a_polygons[ai]), b_polygons);
 
-        // Учет дырок в A
         for(auto itrh = begin_holes(a_polygons[ai]); itrh != end_holes(a_polygons[ai]); ++itrh) {
             convolvePointSequenceWithPolygons(result, begin_points(*itrh), end_points(*itrh), b_polygons);
         }
 
-        // Заполняем "дырки" внутри получившейся фигуры, складывая исходные полигоны с вершинами
         for(std::size_t bi = 0; bi < b_polygons.size(); ++bi) {
             BoostPolygonWithHoles tmp_poly = a_polygons[ai];
             result.insert(convolve(tmp_poly, *(begin_points(b_polygons[bi]))));
@@ -121,7 +113,6 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 // BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
 //     using namespace boost::polygon;
 
-//     // 1. Отражение B (Negate B)
 //     BoostPolygonSet B_negated;
 //     std::vector<BoostPolygon> b_polys;
 //     B.get(b_polys);
@@ -136,7 +127,6 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 //         B_negated.insert(negPoly);
 //     }
 
-//     // 2. Свертка (Minkowski Sum)
 //     BoostPolygonSet result;
 //     convolveTwoPolygonSets(result, A, B_negated);
 
@@ -150,7 +140,6 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace boost::polygon;
 
-    // ЛОГИРОВАНИЕ: Раскомментируйте для отладки
     // qDebug() << "  [NFP] Start Calculate Outer NFP...";
     // QTime timer; timer.start();
 
@@ -175,7 +164,6 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
 
     if (sub.empty() || pat.empty()) return BoostPolygonSet();
 
-    // 3. Сумма Минковского через Clipper2
     Paths64 solution;
 
     // Clipper2 MinkowskiSum принимает Pattern и Path.
@@ -185,8 +173,6 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
 
     for (const auto& pathA : sub) {
         for (const auto& pathB : pat) {
-            // ВАЖНО: MinkowskiSum может быть реализован как шаблон или функция.
-            // Если здесь будет ошибка компиляции, значит сигнатура отличается.
             Paths64 tmp = MinkowskiSum(pathB, pathA, true);
             solution.insert(solution.end(), tmp.begin(), tmp.end());
         }
@@ -271,8 +257,6 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
     using namespace boost::polygon;
 
     // qDebug() << "  [NFP] Calculate Inner NFP...";
-
-    // 1. Отражаем деталь
     BoostPolygonSet Part_negated;
     std::vector<BoostPolygon> b_polys;
     Part.get(b_polys);
@@ -286,11 +270,9 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
         Part_negated.insert(negPoly);
     }
 
-    // 2. Определяем Универсум (Bounding Box)
     rectangle_data<long long> boundsA;
     extents(boundsA, Sheet);
 
-    // Увеличиваем универсум
     long long width = xh(boundsA) - xl(boundsA);
     long long height = yh(boundsA) - yl(boundsA);
     long long margin = std::max(width, height) * 10;
@@ -302,10 +284,9 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
     BoostPolygonSet universe;
     universe.insert(universeRect);
 
-    // 3. Инверсия листа
     BoostPolygonSet Sheet_Inverse = universe - Sheet;
 
-    // 4. Раздуваем инверсию листа на размер детали (Minkowski Sum)
+    // Раздуваем инверсию листа на размер детали (Minkowski Sum)
     // NoFitZone = Minkowski(Sheet_Inverse, Part)
     // (см. пояснение в предыдущем ответе: calculateOuterNFP делает Negate внутри,
     // а нам нужно A + (-B), где B = Part_negated.
