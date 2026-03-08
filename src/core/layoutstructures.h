@@ -7,33 +7,29 @@
 #include <map>
 #include <stdexcept>
 
+struct SheetRequest {
+    double width = 0.0;
+    double height = 0.0;
+    int quantity = 1;
+    bool isInfinite = false;
+};
+
 struct NestingParameters {
-    double sheetWidth = 0.0;
-    double sheetHeight = 0.0;
+    std::vector<SheetRequest> sheets; // Теперь здесь список листов!
     double partSpacing = 0.0;
     double cutThickness = 0.0;
-    // partCount удален, так как количество теперь настраивается для каждой детали в UI
 
     static NestingParameters fromStrings(
-        const std::string& widthStr,
-        const std::string& heightStr,
         const std::string& spacingStr,
         const std::string& thicknessStr)
     {
         NestingParameters p;
         try {
-            p.sheetWidth = std::stod(widthStr);
-            p.sheetHeight = std::stod(heightStr);
             p.partSpacing = std::stod(spacingStr);
             p.cutThickness = std::stod(thicknessStr);
         } catch (const std::exception& e) {
             throw std::runtime_error("Invalid parameter format: " + std::string(e.what()));
         }
-
-        if (p.sheetWidth <= 0 || p.sheetHeight <= 0) {
-            throw std::runtime_error("Dimensions must be positive.");
-        }
-
         return p;
     }
 };

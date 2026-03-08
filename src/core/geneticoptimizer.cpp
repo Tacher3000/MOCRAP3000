@@ -82,8 +82,9 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     qDebug() << "=== Starting Optimization ===";
     qDebug() << "Parts count:" << parts.size();
-    qDebug() << "Params:" << params.sheetWidth << "x" << params.sheetHeight;
-    if (parts.empty()) return {};
+    if (!params.sheets.empty()) {
+        qDebug() << "Params (First sheet):" << params.sheets[0].width << "x" << params.sheets[0].height;
+    }    if (parts.empty()) return {};
 
     m_config.populationSize = 20;
 
@@ -410,28 +411,41 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
     NestingSolution solution;
 
-    long long sheetWidthLocal = static_cast<long long>(params.sheetWidth * NFPCalculator::NFP_SCALE);
-    long long sheetHeightLocal = static_cast<long long>(params.sheetHeight * NFPCalculator::NFP_SCALE);
-
-    if (sheetWidthLocal <= 0 || sheetHeightLocal <= 0) {
-        qWarning() << "Invalid sheet dimensions:" << params.sheetWidth << "x" << params.sheetHeight;
-        return solution;
+    // --- 1. СКЛАД ЛИСТОВ ---
+    struct AvailableSheet {
+        double width, height;
+        int remaining;
+        bool isInfinite;
+    };
+    std::vector<AvailableSheet> availSheets;
+    for(const auto& sr : params.sheets) {
+        availSheets.push_back({sr.width, sr.height, sr.quantity, sr.isInfinite});
     }
 
+    auto getNextSheet = [&]() -> AvailableSheet* {
+        for (auto& s : availSheets) {
+            if (s.isInfinite || s.remaining > 0) return &s;
+        }
+        return nullptr;
+    };
+
     struct PlacedItem {
-        int id;
-        int rotation;
-        BoostPolygonSet poly;
-        long long x, y;
+        int id; int rotation; BoostPolygonSet poly; long long x, y;
     };
 
     struct SheetCtx {
-        int id;
-        std::vector<PlacedItem> placedItems;
+        int id; std::vector<PlacedItem> placedItems;
+        double width, height;
     };
 
     std::vector<SheetCtx> sheets;
-    sheets.push_back({1, {}});
+    AvailableSheet* firstS = getNextSheet();
+    if (firstS) {
+        if (!firstS->isInfinite) firstS->remaining--;
+        sheets.push_back({1, {}, firstS->width, firstS->height});
+    } else {
+        return solution;
+    }
 
     for (size_t i = 0; i < ind.partIndices.size(); ++i) {
         int partIdx = ind.partIndices[i];
@@ -451,6 +465,9 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         bool placed = false;
 
         for (auto& sheet : sheets) {
+            long long sheetWidthLocal = static_cast<long long>(sheet.width * NFPCalculator::NFP_SCALE);
+            long long sheetHeightLocal = static_cast<long long>(sheet.height * NFPCalculator::NFP_SCALE);
+
             if (sheet.placedItems.empty()) {
                 if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
                     PlacedItem newItem;
@@ -580,30 +597,35 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         }
 
         if (!placed) {
-            if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
+            AvailableSheet* nextS = getNextSheet();
+            if (nextS) {
+                if (!nextS->isInfinite) nextS->remaining--;
+
                 SheetCtx newSheet;
                 newSheet.id = static_cast<int>(sheets.size()) + 1;
+                newSheet.width = nextS->width;
+                newSheet.height = nextS->height;
 
-                PlacedItem newItem;
-                newItem.id = partIdx;
-                newItem.rotation = rotIdx;
-                newItem.x = 0;
-                newItem.y = 0;
-                newItem.poly = partShape;
+                long long newSheetWLocal = static_cast<long long>(newSheet.width * NFPCalculator::NFP_SCALE);
+                long long newSheetHLocal = static_cast<long long>(newSheet.height * NFPCalculator::NFP_SCALE);
 
-                newSheet.placedItems.push_back(newItem);
-                sheets.push_back(newSheet);
+                if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
+                    PlacedItem newItem;
+                    newItem.id = partIdx; newItem.rotation = rotIdx;
+                    newItem.x = 0; newItem.y = 0; newItem.poly = partShape;
 
-                PlacedPart pp;
-                pp.originalPartId = originalPart.id;
-                pp.sheetId = newSheet.id;
-                pp.rotation = rotIdx * 90.0;
-                pp.x = 0.0;
-                pp.y = 0.0;
-                solution.placedParts.push_back(pp);
-                solution.partsMap[originalPart.id] = originalPart;
+                    newSheet.placedItems.push_back(newItem);
+                    sheets.push_back(newSheet);
+
+                    PlacedPart pp;
+                    pp.originalPartId = originalPart.id;
+                    pp.sheetId = newSheet.id; pp.rotation = rotIdx * 90.0;
+                    pp.x = 0.0; pp.y = 0.0;
+                    solution.placedParts.push_back(pp);
+                    solution.partsMap[originalPart.id] = originalPart;
+                }
             } else {
-                qWarning() << "Part " << originalPart.id << " does not fit on empty sheet!";
+                qWarning() << "Закончились листы на складе! Деталь не размещена.";
             }
         }
     }
@@ -614,8 +636,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     for (const auto& sheet : sheets) {
         if (sheet.placedItems.empty()) continue;
 
-        solution.usedSheets.push_back({sheet.id, params.sheetWidth, params.sheetHeight});
-        totalArea += params.sheetWidth * params.sheetHeight;
+        solution.usedSheets.push_back({sheet.id, sheet.width, sheet.height});
+        totalArea += sheet.width * sheet.height;
 
         for (const auto& item : sheet.placedItems) {
             double area = boost::polygon::area(rotatedPartsCache.at(parts[item.id].id)[item.rotation]);

@@ -5,11 +5,21 @@
 #include <algorithm>
 #include <cmath>
 
+#include "layoutoptimizer.h"
+#include "geometryutils.h"
+#include <QTransform>
+#include <QDebug>
+#include <algorithm>
+#include <cmath>
+
 NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const NestingParameters& params) {
     if (rawGeometry.parts.empty()) return {};
 
     NestingSolution solution;
     double offset = (params.partSpacing + params.cutThickness) / 2.0;
+
+    double currentSheetWidth = params.sheets.empty() ? 1000.0 : params.sheets[0].width;
+    double currentSheetHeight = params.sheets.empty() ? 1000.0 : params.sheets[0].height;
 
     std::vector<OptimizablePart> partsToNest;
 
@@ -62,7 +72,7 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
         bool placed = false;
 
         for (auto& sheet : sheets) {
-            if (placePartOnSheet(sheet.occupied, part, params.sheetWidth, params.sheetHeight,
+            if (placePartOnSheet(sheet.occupied, part, currentSheetWidth, currentSheetHeight,
                                  solution, sheet.id, coarseGridStep)) {
                 placed = true;
                 break;
@@ -71,7 +81,7 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
 
         if (!placed) {
             auto& newSheet = addSheet();
-            if (!placePartOnSheet(newSheet.occupied, part, params.sheetWidth, params.sheetHeight,
+            if (!placePartOnSheet(newSheet.occupied, part, currentSheetWidth, currentSheetHeight,
                                   solution, newSheet.id, coarseGridStep)) {
                 qWarning() << "Part ID" << part.id << "does not fit on the sheet!";
             }
@@ -79,14 +89,15 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
     }
 
     for (const auto& s : sheets) {
-        solution.usedSheets.push_back({s.id, params.sheetWidth, params.sheetHeight});
+        solution.usedSheets.push_back({s.id, currentSheetWidth, currentSheetHeight});
     }
 
-    double totalArea = sheets.size() * params.sheetWidth * params.sheetHeight;
+    double totalArea = sheets.size() * currentSheetWidth * currentSheetHeight;
     solution.utilization = (totalArea > 0) ? (static_cast<double>(solution.placedParts.size()) * 100.0 / totalArea) : 0.0;
 
     return solution;
 }
+
 
 bool LayoutOptimizer::placePartOnSheet(QPainterPath& occupied, const OptimizablePart& part,
                                        double sheetW, double sheetH,

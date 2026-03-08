@@ -3,6 +3,7 @@
 #include "viewerwidget.h"
 #include "layoutviewerwidget.h"
 #include "partlistwidget.h"
+#include "sheetlistwidget.h"
 
 #include <QMenuBar>
 #include <QFileDialog>
@@ -59,6 +60,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     connect(partList, &PartListWidget::partSelected, this, &MainWindow::onPartSelected);
     connect(partList, &PartListWidget::showAllPartsRequested, this, &MainWindow::onShowAllPartsRequested);
+
+    partList = new PartListWidget(this);
+    leftLayout->addWidget(partList);
+
+    SheetListWidget* sheetList = new SheetListWidget(this);
+    leftLayout->addWidget(sheetList);
 
     btnStartOptimization = new QPushButton(tr("Запустить оптимизацию"), this);
     btnStartOptimization->setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #4CAF50; color: white; border-radius: 4px;");
@@ -206,6 +213,16 @@ void MainWindow::startOptimization() {
     progressBar->setVisible(true);
 
     NestingParameters params = parametersDialog->getNestingParameters();
+
+    SheetListWidget* sheetList = this->findChild<SheetListWidget*>();
+    if (sheetList) {
+        params.sheets = sheetList->getSheets();
+    }
+
+    if (params.sheets.empty()) {
+        QMessageBox::warning(this, tr("Ошибка"), tr("Добавьте хотя бы один лист для раскроя!"));
+        return;
+    }
 
     emit startOptimizationRequested(activeGeometry, params);
 }

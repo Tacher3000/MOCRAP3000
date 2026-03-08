@@ -53,8 +53,6 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
 NestingParameters ParametersWidget::getNestingParameters() const {
     return NestingParameters::fromStrings(
         sheetWidth->text().toStdString(),
-        sheetHeight->text().toStdString(),
-        partSpacing->text().toStdString(),
-        cutThickness->text().toStdString()
+        sheetHeight->text().toStdString()
         );
 }
