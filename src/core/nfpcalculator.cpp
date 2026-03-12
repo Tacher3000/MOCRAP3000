@@ -10,7 +10,7 @@
 using namespace boost::polygon::operators;
 using namespace Clipper2Lib;
 
-// --- Вспомогательные функции свертки (Порт minkowski.cc) ---
+// --- Вспомогательные функции свертки ---
 // Эти функции реализуют низкоуровневую математику суммы Минковского для сегментов и полигонов.
 
 /**
@@ -99,51 +99,17 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 // --- Основные методы ---
 
 /**
- * @brief Вычисляет Outer NFP (Зону коллизии).
- * * @details
- * Outer NFP для пары полигонов A и B — это множество векторов трансляции $v$,
- * таких что $A \cap (B + v) \neq \emptyset$.
- * Алгоритм:
- * 1. Инвертировать полигон B (отразить относительно 0,0). $x' = -x, y' = -y$.
- * 2. Вычислить сумму Минковского $A \oplus (-B)$.
- * * @param A Стационарная деталь (препятствие).
- * @param B Деталь, которую мы хотим разместить (orbiting part).
- * @return BoostPolygonSet Полигон, описывающий запрещенные позиции для центра детали B.
- */
-// BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
-//     using namespace boost::polygon;
-
-//     BoostPolygonSet B_negated;
-//     std::vector<BoostPolygon> b_polys;
-//     B.get(b_polys);
-
-//     for (auto& poly : b_polys) {
-//         std::vector<BoostPoint> pts;
-//         for (auto it = begin_points(poly); it != end_points(poly); ++it) {
-//             pts.push_back(BoostPoint(-it->x(), -it->y()));
-//         }
-//         BoostPolygon negPoly;
-//         set_points(negPoly, pts.begin(), pts.end());
-//         B_negated.insert(negPoly);
-//     }
-
-//     BoostPolygonSet result;
-//     convolveTwoPolygonSets(result, A, B_negated);
-
-//     return result;
-// }
-
-/**
- * @brief Вычисляет Outer NFP (Зону коллизии).
- * Реализация через Clipper2 MinkowskiSum.
+ * @brief Вычисляет Outer NFP (Зону коллизии) через честную свертку Boost.Polygon.
+ *
+ * @details
+ * Outer NFP для пары полигонов A и B — это множество векторов трансляции,
+ * при которых A и B пересекаются. Математически это сумма Минковского A ⊕ (-B).
+ * * Мы используем портированный из Deepnest метод convolveTwoPolygonSets,
+ * который корректно обрабатывает невыпуклые полигоны без образования "ложных пустот".
  */
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace boost::polygon;
 
-    // qDebug() << "  [NFP] Start Calculate Outer NFP...";
-    // QTime timer; timer.start();
-
-    // 1. Отражение B (Negate B) - как и раньше, NFP(A, B) = Minkowski(A, -B)
     BoostPolygonSet B_negated;
     std::vector<BoostPolygon> b_polys;
     B.get(b_polys);
@@ -158,38 +124,70 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
         B_negated.insert(negPoly);
     }
 
-    // 2. Конвертация в Clipper2
-    Paths64 sub = toClipper(A);         // Препятствие (Subject)
-    Paths64 pat = toClipper(B_negated); // Деталь (Pattern)
 
-    if (sub.empty() || pat.empty()) return BoostPolygonSet();
-
-    Paths64 solution;
-
-    // Clipper2 MinkowskiSum принимает Pattern и Path.
-    // Нам нужно просуммировать каждый контур A с каждым контуром B.
-    // Обычно MinkowskiSum работает "Pattern (замкнутый) + Path (открытый или замкнутый)".
-    // Здесь мы используем перегрузку: MinkowskiSum(Pattern, Path, isClosed)
-
-    for (const auto& pathA : sub) {
-        for (const auto& pathB : pat) {
-            Paths64 tmp = MinkowskiSum(pathB, pathA, true);
-            solution.insert(solution.end(), tmp.begin(), tmp.end());
-        }
-    }
-
-    // 4. Объединение (Union) результата, чтобы убрать самопересечения
-    Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
-
-    // 5. Конвертация обратно в Boost
-    BoostPolygonSet result = fromClipper(unifiedSolution);
-
-    // if (timer.elapsed() > 100) {
-    //    qDebug() << "  [NFP] Slow NFP calc:" << timer.elapsed() << "ms. Result polys:" << unifiedSolution.size();
-    // }
+    BoostPolygonSet result;
+    convolveTwoPolygonSets(result, A, B_negated);
 
     return result;
 }
+
+/**
+ * @brief Вычисляет Outer NFP (Зону коллизии).
+ * Реализация через Clipper2 MinkowskiSum.
+ */
+// BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
+//     using namespace boost::polygon;
+
+//     // qDebug() << "  [NFP] Start Calculate Outer NFP...";
+//     // QTime timer; timer.start();
+
+//     // 1. Отражение B (Negate B) - как и раньше, NFP(A, B) = Minkowski(A, -B)
+//     BoostPolygonSet B_negated;
+//     std::vector<BoostPolygon> b_polys;
+//     B.get(b_polys);
+
+//     for (auto& poly : b_polys) {
+//         std::vector<BoostPoint> pts;
+//         for (auto it = begin_points(poly); it != end_points(poly); ++it) {
+//             pts.push_back(BoostPoint(-it->x(), -it->y()));
+//         }
+//         BoostPolygon negPoly;
+//         set_points(negPoly, pts.begin(), pts.end());
+//         B_negated.insert(negPoly);
+//     }
+
+//     // 2. Конвертация в Clipper2
+//     Paths64 sub = toClipper(A);         // Препятствие (Subject)
+//     Paths64 pat = toClipper(B_negated); // Деталь (Pattern)
+
+//     if (sub.empty() || pat.empty()) return BoostPolygonSet();
+
+//     Paths64 solution;
+
+//     // Clipper2 MinkowskiSum принимает Pattern и Path.
+//     // Нам нужно просуммировать каждый контур A с каждым контуром B.
+//     // Обычно MinkowskiSum работает "Pattern (замкнутый) + Path (открытый или замкнутый)".
+//     // Здесь мы используем перегрузку: MinkowskiSum(Pattern, Path, isClosed)
+
+//     for (const auto& pathA : sub) {
+//         for (const auto& pathB : pat) {
+//             Paths64 tmp = MinkowskiSum(pathB, pathA, true);
+//             solution.insert(solution.end(), tmp.begin(), tmp.end());
+//         }
+//     }
+
+//     // 4. Объединение (Union) результата, чтобы убрать самопересечения
+//     Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
+
+//     // 5. Конвертация обратно в Boost
+//     BoostPolygonSet result = fromClipper(unifiedSolution);
+
+//     // if (timer.elapsed() > 100) {
+//     //    qDebug() << "  [NFP] Slow NFP calc:" << timer.elapsed() << "ms. Result polys:" << unifiedSolution.size();
+//     // }
+
+//     return result;
+// }
 
 /**
  * @brief Вычисляет Inner NFP (Зону допустимого размещения внутри листа).
@@ -295,7 +293,6 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
 
     BoostPolygonSet NoFitZone = calculateOuterNFP(Sheet_Inverse, Part);
 
-    // 5. Допустимая зона
     BoostPolygonSet InnerFit = universe - NoFitZone;
 
     return InnerFit;

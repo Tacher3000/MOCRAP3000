@@ -203,10 +203,43 @@ std::vector<Contour> stitchSegments(const std::vector<Segment>& inputSegments) {
     return contours;
 }
 
+/**
+ * @brief Вычисляет площадь контура (по формуле Гаусса).
+ */
+static double getContourArea(const Contour& c) {
+    if (c.points.size() < 3) return 0.0;
+    double area = 0.0;
+    size_t n = c.points.size();
+    for (size_t i = 0, j = n - 1; i < n; j = i++) {
+        area += (c.points[j].x + c.points[i].x) * (c.points[j].y - c.points[i].y);
+    }
+    return std::abs(area) / 2.0;
+}
+
+/**
+ * @brief Проверяет, находится ли точка внутри контура (Ray-Casting алгоритм).
+ */
+static bool isPointInContour(const Point& pt, const Contour& contour) {
+    bool inside = false;
+    size_t n = contour.points.size();
+    for (size_t i = 0, j = n - 1; i < n; j = i++) {
+        const Point& p1 = contour.points[i];
+        const Point& p2 = contour.points[j];
+
+        // Проверяем пересечение луча, направленного вправо по оси X
+        if (((p1.y > pt.y) != (p2.y > pt.y)) &&
+            (pt.x < (p2.x - p1.x) * (pt.y - p1.y) / (p2.y - p1.y) + p1.x)) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}
+
 // --- Основная функция ---
 Polygon normalizePart(const Part& part) {
     Polygon polygon;
 
+    // 1. Обработка кругов
     for (const auto& circ : part.circles) {
         Contour c;
         std::vector<Point> pts = generateArcPoints(circ.center.x, circ.center.y, circ.radius, 0, 2 * M_PI, true);
@@ -217,10 +250,12 @@ Polygon normalizePart(const Part& part) {
 
     std::vector<Segment> looseSegments;
 
+    // 2. Обработка линий
     for (const auto& line : part.lines) {
         looseSegments.push_back({ {line.start.x, line.start.y}, {line.end.x, line.end.y}, {}, false });
     }
 
+    // 3. Обработка дуг
     for (const auto& arc : part.arcs) {
         double startRad = arc.startAngle * M_PI / 180.0;
         double endRad = arc.endAngle * M_PI / 180.0;
@@ -232,6 +267,7 @@ Polygon normalizePart(const Part& part) {
         looseSegments.push_back({ pStart, pEnd, inter, false });
     }
 
+    // 4. Обработка полилиний
     for (const auto& lw : part.lwpolylines) {
         if (lw.vertices.size() < 2) continue;
         bool closed = (lw.flags & 1);
@@ -252,12 +288,40 @@ Polygon normalizePart(const Part& part) {
         }
     }
 
+    // 5. Сшивка сегментов
     if (!looseSegments.empty()) {
         std::vector<Contour> stitched = stitchSegments(looseSegments);
         polygon.contours.insert(polygon.contours.end(), stitched.begin(), stitched.end());
     }
 
+    // 6. Анализ контуров: Габариты, сортировка и определение отверстий
     if (!polygon.contours.empty()) {
+
+        // Сортируем контуры по убыванию площади
+        std::sort(polygon.contours.begin(), polygon.contours.end(), [](const Contour& a, const Contour& b) {
+            return getContourArea(a) > getContourArea(b);
+        });
+
+        // Определяем иерархию (кто внутри кого)
+        for (size_t i = 0; i < polygon.contours.size(); ++i) {
+            int insideCount = 0;
+            if (polygon.contours[i].points.empty()) continue;
+
+            // Берем первую точку контура для проверки (этого достаточно)
+            Point testPt = polygon.contours[i].points[0];
+
+            // Проверяем только среди контуров, которые больше по площади (они идут раньше в массиве)
+            for (size_t j = 0; j < i; ++j) {
+                if (isPointInContour(testPt, polygon.contours[j])) {
+                    insideCount++;
+                }
+            }
+
+            // Если контур лежит внутри нечетного количества родительских контуров, значит это отверстие
+            polygon.contours[i].isHole = (insideCount % 2 != 0);
+        }
+
+        // Вычисляем общий Bounding Box
         double minX = std::numeric_limits<double>::max();
         double maxX = std::numeric_limits<double>::lowest();
         double minY = std::numeric_limits<double>::max();

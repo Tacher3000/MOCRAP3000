@@ -7,8 +7,7 @@
 
 class NFPCalculator {
 public:
-    // Используем высокий скейл как в Deepnest (10^7) для точности
-    static constexpr double NFP_SCALE = 10000000.0;
+    static constexpr double NFP_SCALE = 100000.0;
 
     /**
      * @brief Вычисляет Outer NFP (No Fit Polygon).
@@ -37,7 +36,6 @@ public:
 private:
     typedef std::pair<BoostPoint, BoostPoint> BoostEdge;
 
-    // Реализация свертки (Convolution) сегментов и полигонов (порт из minkowski.cc)
     static void convolveTwoSegments(std::vector<BoostPoint>& figure, const BoostEdge& a, const BoostEdge& b);
 
     template <typename itrT1, typename itrT2>

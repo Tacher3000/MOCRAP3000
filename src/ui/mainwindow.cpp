@@ -212,6 +212,8 @@ void MainWindow::startOptimization() {
     statusLabel->setText(tr("Выполняется оптимизация..."));
     progressBar->setVisible(true);
 
+    layoutViewer->clearHistory();
+
     NestingParameters params = parametersDialog->getNestingParameters();
 
     SheetListWidget* sheetList = this->findChild<SheetListWidget*>();

@@ -17,7 +17,7 @@ public:
     Geometry loadDxf(const std::string& filePath);
 
 private:
-    int m_globalPartId = 0; // Глобальный счетчик уникальных ID
+    int m_globalPartId = 0;
 };
 
 #endif // INPUTMANAGER_H

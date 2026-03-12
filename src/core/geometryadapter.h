@@ -11,6 +11,7 @@
 #endif
 
 namespace bp = boost::polygon;
+using namespace boost::polygon::operators;
 
 // Определения типов Boost
 typedef bp::point_data<long long> BoostPoint;
@@ -28,7 +29,8 @@ public:
     // Масштабный коэффициент: double -> long long.
     // Значение 10000.0 (10^4) дает точность 0.0001 мм.
     // Deepnest использует 10^7, здесь для безопасности переполнения можно начать с 10^4 или 10^5.
-    static constexpr double SCALE_FACTOR = 10000000.0;
+    //эксперементирую со значениями
+    static constexpr double SCALE_FACTOR = 100000.0;
 
     /**
      * @brief Конвертирует Point (double) в BoostPoint (long long).
@@ -54,7 +56,8 @@ public:
      * Важно: Используется set.insert() для автоматического объединения (union) перекрывающихся контуров детали.
      */
     static BoostPolygonSet toBoost(const Part& part) {
-        BoostPolygonSet set;
+        BoostPolygonSet outerSet;
+        BoostPolygonSet holesSet;
 
         for (const auto& contour : part.polygon.contours) {
             std::vector<BoostPoint> pts;
@@ -63,21 +66,25 @@ public:
                 pts.push_back(toBoost(p));
             }
 
-            // Гарантируем замыкание полигона
             if (!pts.empty() && pts.front() != pts.back()) {
                 pts.push_back(pts.front());
             }
 
-            if(pts.size() < 3) continue; // Пропускаем вырожденные полигоны (линии, точки)
+            if(pts.size() < 4) continue;
 
             BoostPolygon poly;
             bp::set_points(poly, pts.begin(), pts.end());
 
-            // Вставляем полигон в сет. Boost сам обработает пересечения и вложенность (holes).
-            set.insert(poly);
+            if (contour.isHole) {
+                holesSet.insert(poly);
+            } else {
+                outerSet.insert(poly);
+            }
         }
 
-        return set;
+        outerSet -= holesSet;
+
+        return outerSet;
     }
 
     /**
@@ -90,12 +97,10 @@ public:
         double start = arc.startAngle * M_PI / 180.0;
         double end = arc.endAngle * M_PI / 180.0;
 
-        // Нормализация углов
         if (arc.isCounterClockwise && end < start) end += 2 * M_PI;
         if (!arc.isCounterClockwise && start < end) start += 2 * M_PI;
 
         double sweep = std::abs(end - start);
-        // Вычисляем количество шагов на основе допустимой погрешности (хорда)
         int steps = std::max(4, static_cast<int>(std::ceil(sweep / (2 * std::acos(1 - tolerance / arc.radius)))));
 
         for (int i = 0; i <= steps; ++i) {

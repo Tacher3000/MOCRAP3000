@@ -179,31 +179,34 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
         QPainterPath path = geometry::toQPainterPath(originalPart.polygon);
         QRectF bRect = path.boundingRect();
 
-        QTransform transform;
+        QTransform t1;
+        t1.translate(-bRect.left(), -bRect.top());
 
-        transform.translate(-bRect.left(), -bRect.top());
-        transform.rotate(placedPart.rotation);
+        QTransform r;
+        r.rotate(placedPart.rotation);
 
-        QRectF rotatedRect = transform.map(path).boundingRect();
-        transform.translate(-rotatedRect.left(), -rotatedRect.top());
+        QRectF rotatedRect = (t1 * r).map(path).boundingRect();
 
+        QTransform t2;
+        t2.translate(-rotatedRect.left(), -rotatedRect.top());
+
+        QTransform t3;
         double sheetOffset = (placedPart.sheetId - 1) * sheetVizStep;
-        transform.translate(sheetOffset + placedPart.x, placedPart.y);
+        t3.translate(sheetOffset + placedPart.x, placedPart.y);
 
-        QPainterPath finalPath = transform.map(path);
+        QTransform finalTransform = t1 * r * t2 * t3;
+
+        QPainterPath finalPath = finalTransform.map(path);
 
         int partId = originalPart.id;
         if (colorMap.find(partId) == colorMap.end()) {
-
             int hue = (partId * 137) % 360;
             colorMap[partId] = QColor::fromHsv(hue, 200, 200);
         }
 
         QBrush partBrush(colorMap[partId], Qt::FDiagPattern);
-
         scene->addPath(finalPath, QPen(Qt::NoPen), partBrush);
 
-
-        drawPart(scene, originalPart, partPen, transform);
+        drawPart(scene, originalPart, partPen, finalTransform);
     }
 }

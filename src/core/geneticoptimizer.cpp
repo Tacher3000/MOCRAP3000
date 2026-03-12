@@ -80,10 +80,10 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
                                            std::function<void(const NestingSolution&)> progressCallback)
 {
 
-    qDebug() << "=== Starting Optimization ===";
-    qDebug() << "Parts count:" << parts.size();
+    // qDebug() << "=== Starting Optimization ===";
+    // qDebug() << "Parts count:" << parts.size();
     if (!params.sheets.empty()) {
-        qDebug() << "Params (First sheet):" << params.sheets[0].width << "x" << params.sheets[0].height;
+        // qDebug() << "Params (First sheet):" << params.sheets[0].width << "x" << params.sheets[0].height;
     }    if (parts.empty()) return {};
 
     m_config.populationSize = 20;
@@ -110,11 +110,42 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         }
     }
 
+    // qDebug() << "Инициализация первичной популяции";
+    // --- 2. КЭШИРОВАНИЕ ПАРНЫХ NFP (Pairwise Batching) ---
+    // qDebug() << "Precalculating NFP Cache...";
+    NFPCacheType nfpCache;
+
+    // Распараллеливаем предварительный расчет (на твоем 5600X это пройдет за секунду)
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < static_cast<int>(parts.size()); ++i) {
+        for (int j = 0; j < static_cast<int>(parts.size()); ++j) {
+            const Part& partA = parts[i];
+            const Part& partB = parts[j];
+
+            for (int rotA = 0; rotA < 4; ++rotA) {
+                for (int rotB = 0; rotB < 4; ++rotB) {
+                    const auto& polyA = rotatedPartsCache.at(partA.id)[rotA];
+                    const auto& polyB = rotatedPartsCache.at(partB.id)[rotB];
+
+                    BoostPolygonSet nfpBoost = NFPCalculator::calculateOuterNFP(polyA, polyB);
+                    Paths64 nfpClipper = NFPCalculator::toClipper(nfpBoost);
+
+                    // Блокируем доступ для записи в мапу из разных потоков
+                    #pragma omp critical
+                    {
+                        nfpCache[{partA.id, rotA, partB.id, rotB}] = nfpClipper;
+                    }
+                }
+            }
+        }
+    }
+    qDebug() << "NFP Cache ready! Entries:" << nfpCache.size();
+
     qDebug() << "Инициализация первичной популяции";
     initializePopulation(parts, m_config.populationSize);
 
-    qDebug() << "Оценка первой популяции";
-    evaluatePopulation(m_population, parts, params, rotatedPartsCache);
+    // qDebug() << "Оценка первой популяции";
+    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache);
 
     Individual bestInd = m_population[0];
     if (progressCallback) progressCallback(bestInd.cachedSolution);
@@ -122,10 +153,10 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     int gen = 0;
     for (; gen < m_config.maxGenerations; ++gen) {
         if (stopFlag) {
-            qDebug() << "Stop requested by user at generation" << gen;
+            // qDebug() << "Stop requested by user at generation" << gen;
             break;
         }
-        qDebug() << "Processing Generation:" << gen;
+        // qDebug() << "Processing Generation:" << gen;
 
         std::vector<Individual> newPop;
         newPop.reserve(m_config.populationSize);
@@ -147,9 +178,9 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
         m_population = std::move(newPop);
 
-        qDebug() << "Evaluating population...";
-        evaluatePopulation(m_population, parts, params, rotatedPartsCache);
-        qDebug() << "Evaluation finished.";
+        // qDebug() << "Evaluating population...";
+        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache);
+        // qDebug() << "Evaluation finished.";
 
 
         auto it = std::min_element(m_population.begin(), m_population.end(),
@@ -243,18 +274,21 @@ BoostPolygonSet GeneticOptimizer::rotatePolySet(const BoostPolygonSet& set, int 
 }
 
 /**
- * @brief Нормализация геометрии: сдвиг Top-Left угла BoundingBox в (0,0).
+ * @brief Нормализация геометрии: сдвиг Top-Left (Min X, Min Y) угла BoundingBox в (0,0).
  * Важно для алгоритма размещения, который работает в локальных координатах.
  */
 void GeneticOptimizer::normalizePolySet(BoostPolygonSet& set) {
     namespace bp = boost::polygon;
     bp::rectangle_data<long long> rect;
-    if (!bp::extents(rect, set)) return; // Пустой сет
 
-    long long dx = -bp::xl(rect); // xl - min X
-    long long dy = -bp::yl(rect); // yl - min Y
+    if (!bp::extents(rect, set)) return;
 
-    moveBoostSet(set, dx, dy);
+    long long minX = bp::xl(rect);
+    long long minY = bp::yl(rect);
+
+    if (minX == 0 && minY == 0) return;
+
+    moveBoostSet(set, -minX, -minY);
 }
 
 /**
@@ -269,19 +303,37 @@ void GeneticOptimizer::normalizePolySet(BoostPolygonSet& set) {
 void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
                                           const std::vector<Part>& parts,
                                           const NestingParameters& params,
-                                          const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache)
+                                          const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
+                                          const NFPCacheType& nfpCache)
 {
+// Распараллеливаем цикл по индивидам
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(population.size()); ++i) {
-        population[i].cachedSolution = decode(population[i], parts, params, rotatedPartsCache);
+        population[i].cachedSolution = decode(population[i], parts, params, rotatedPartsCache, nfpCache);
 
-        // Расчет Fitness.
-        // utilization возвращается в процентах (0..100).
-        // Цель алгоритма: минимизировать fitness.
-        // Если утилизация 0 (ошибка), даем огромный штраф.
         double util = population[i].cachedSolution.utilization;
-        if (util < 1e-5) population[i].fitness = 1e9; // Штраф
-        else population[i].fitness = 1.0 / util; // Чем больше util, тем меньше fitness
+        double fitness = 0.0;
+
+        fitness += population[i].cachedSolution.usedSheets.size() * 1000000.0;
+
+        double boundingBoxPenalty = 0.0;
+        std::map<int, double> sheetMaxX;
+        std::map<int, double> sheetMaxY;
+
+        for (const auto& pp : population[i].cachedSolution.placedParts) {
+            if (pp.x > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = pp.x;
+            if (pp.y > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = pp.y;
+        }
+
+        for (const auto& pair : sheetMaxX) {
+            int sId = pair.first;
+            boundingBoxPenalty += (sheetMaxX[sId] * sheetMaxY[sId]);
+        }
+        fitness += boundingBoxPenalty;
+
+        if (util < 1e-5) fitness += 1e9;
+
+        population[i].fitness = fitness;
     }
 }
 
@@ -293,7 +345,6 @@ Individual GeneticOptimizer::selection(const std::vector<Individual>& pop) {
     std::uniform_int_distribution<size_t> dist(0, pop.size() - 1);
     const auto& p1 = pop[dist(m_rng)];
     const auto& p2 = pop[dist(m_rng)];
-    // Меньше fitness - лучше
     return (p1.fitness < p2.fitness) ? p1 : p2;
 }
 
@@ -405,9 +456,10 @@ void GeneticOptimizer::mutate(Individual& ind) {
 NestingSolution GeneticOptimizer::decode(const Individual& ind,
                                          const std::vector<Part>& parts,
                                          const NestingParameters& params,
-                                         const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache)
+                                         const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
+                                         const NFPCacheType& nfpCache)
 {
-    qDebug() << "  [Decode] Start decoding individual with" << ind.partIndices.size() << "parts.";
+    // qDebug() << "  [Decode] Start decoding individual with" << ind.partIndices.size() << "parts.";
 
     NestingSolution solution;
 
@@ -454,7 +506,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
         const BoostPolygonSet& partShape = rotatedPartsCache.at(originalPart.id)[rotIdx];
 
-        qDebug() << "    [Decode] Placing part" << i << "(ID:" << originalPart.id << ")";
+        // qDebug() << "    [Decode] Placing part" << i << "(ID:" << originalPart.id << ")";
 
         namespace bp = boost::polygon;
         bp::rectangle_data<long long> partRect;
@@ -489,7 +541,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     solution.partsMap[originalPart.id] = originalPart;
 
                     placed = true;
-                    qDebug() << "      -> Placed on EMPTY sheet" << sheet.id;
+                    // qDebug() << "      -> Placed on EMPTY sheet" << sheet.id;
                     break;
                 }
             }
@@ -510,35 +562,28 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
             if (!sheet.placedItems.empty()) {
                 Paths64 obstacles;
-                qDebug() << "      -> Calculating NFP with" << sheet.placedItems.size() << "obstacles...";
 
                 for (const auto& placedItem : sheet.placedItems) {
-                    // Логика Outer NFP:
-                    // A = уже размещенная деталь (placedItem)
-                    // B = текущая деталь (partShape)
-                    // OuterNFP(A, B) = MinkowskiSum(A, -B).
-                    // Это множество точек, куда если поставить origin B, то A и B пересекутся.
+                    // const BoostPolygonSet& polyA = rotatedPartsCache.at(parts[placedItem.id].id)[placedItem.rotation];
+                    // BoostPolygonSet outerNFP = NFPCalculator::calculateOuterNFP(polyA, partShape);
+                    // Paths64 outerPath = NFPCalculator::toClipper(outerNFP);
 
-                    // Берем кэшированную геометрию A (в 0,0) и B (в 0,0)
-                    const BoostPolygonSet& polyA = rotatedPartsCache.at(parts[placedItem.id].id)[placedItem.rotation];
+                    int idA = parts[placedItem.id].id;
+                    int rotA = placedItem.rotation;
+                    int idB = originalPart.id;
+                    int rotB = rotIdx;
 
-                    // Вычисляем NFP в относительных координатах (как будто обе в 0,0)
-                    BoostPolygonSet outerNFP = NFPCalculator::calculateOuterNFP(polyA, partShape);
-                    Paths64 outerPath = NFPCalculator::toClipper(outerNFP);
+                    Paths64 outerPath = nfpCache.at({idA, rotA, idB, rotB});
 
-                    // Сдвигаем полученный NFP в реальную позицию детали A на листе
                     for (auto& path : outerPath) {
                         for (auto& pt : path) {
                             pt.x += placedItem.x;
                             pt.y += placedItem.y;
                         }
                     }
-                    // Добавляем в список препятствий
                     obstacles.insert(obstacles.end(), outerPath.begin(), outerPath.end());
                 }
 
-                // ВЫЧИТАНИЕ: FinalNFP = InnerNFP Difference Union(Obstacles)
-                // Clipper автоматически делает Union для Subject/Clip перед разностью.
                 Paths64 finalNFP;
                 Clipper64 clipper;
                 clipper.AddSubject(innerNFPClipper);
@@ -557,9 +602,32 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             Point64 bestPos;
             bool foundPos = false;
 
+            long long sheetMaxX = 0;
+            long long sheetMaxY = 0;
+            for (const auto& item : sheet.placedItems) {
+                namespace bp = boost::polygon;
+                bp::rectangle_data<long long> r;
+                if (bp::extents(r, item.poly)) {
+                    sheetMaxX = std::max(sheetMaxX, bp::xh(r));
+                    sheetMaxY = std::max(sheetMaxY, bp::yh(r));
+                }
+            }
+
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
-                    double score = pt.x + pt.y * 0.0001;
+
+                    if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
+                        continue;
+                    }
+
+                    long long testMaxX = std::max(sheetMaxX, static_cast<long long>(pt.x + pW));
+                    long long testMaxY = std::max(sheetMaxY, static_cast<long long>(pt.y + pH));
+
+                    double area = static_cast<double>(testMaxX) * static_cast<double>(testMaxY);
+
+                    double tieBreaker = static_cast<double>(pt.x) + static_cast<double>(pt.y);
+
+                    double score = area + tieBreaker * 0.001;
 
                     if (score < bestScore) {
                         bestScore = score;
@@ -591,7 +659,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 solution.partsMap[originalPart.id] = originalPart;
 
                 placed = true;
-                qDebug() << "      -> Placed on sheet" << sheet.id << "at" << pp.x << pp.y;
+                // qDebug() << "      -> Placed on sheet" << sheet.id << "at" << pp.x << pp.y;
                 break;
             }
         }
@@ -625,7 +693,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     solution.partsMap[originalPart.id] = originalPart;
                 }
             } else {
-                qWarning() << "Закончились листы на складе! Деталь не размещена.";
+                // qWarning() << "Закончились листы на складе! Деталь не размещена.";
             }
         }
     }
@@ -647,7 +715,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
     solution.utilization = (totalArea > 0) ? (partsArea / totalArea) * 100.0 : 0.0;
 
-    qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
+    // qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
 
     return solution;
 }

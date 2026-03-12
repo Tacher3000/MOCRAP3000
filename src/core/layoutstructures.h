@@ -15,7 +15,7 @@ struct SheetRequest {
 };
 
 struct NestingParameters {
-    std::vector<SheetRequest> sheets; // Теперь здесь список листов!
+    std::vector<SheetRequest> sheets;
     double partSpacing = 0.0;
     double cutThickness = 0.0;
 
