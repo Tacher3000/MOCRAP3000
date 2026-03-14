@@ -61,9 +61,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(partList, &PartListWidget::partSelected, this, &MainWindow::onPartSelected);
     connect(partList, &PartListWidget::showAllPartsRequested, this, &MainWindow::onShowAllPartsRequested);
 
-    partList = new PartListWidget(this);
-    leftLayout->addWidget(partList);
-
     SheetListWidget* sheetList = new SheetListWidget(this);
     leftLayout->addWidget(sheetList);
 

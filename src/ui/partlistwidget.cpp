@@ -8,6 +8,9 @@
 PartItemWidget::PartItemWidget(const Part& part, QWidget* parent)
     : QWidget(parent), m_part(part)
 {
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setFixedHeight(95);
+
     setAttribute(Qt::WA_StyledBackground, true);
     setProperty("selected", false);
     setStyleSheet("PartItemWidget { background-color: transparent; border-bottom: 1px solid #ddd; margin: 2px; }"
@@ -50,7 +53,7 @@ PartItemWidget::PartItemWidget(const Part& part, QWidget* parent)
     infoLayout->addWidget(nameLabel);
     infoLayout->addWidget(dimLabel);
     infoLayout->addStretch();
-    mainLayout->addLayout(infoLayout);
+    mainLayout->addLayout(infoLayout, 1);
 
     m_quantitySpin = new QSpinBox(this);
     m_quantitySpin->setRange(1, 9999);
