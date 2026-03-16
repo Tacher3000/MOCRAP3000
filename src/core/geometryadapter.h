@@ -14,10 +14,10 @@ namespace bp = boost::polygon;
 using namespace boost::polygon::operators;
 
 // Определения типов Boost
-typedef bp::point_data<long long> BoostPoint;
-typedef bp::polygon_data<long long> BoostPolygon;
-typedef bp::polygon_with_holes_data<long long> BoostPolygonWithHoles;
-typedef bp::polygon_set_data<long long> BoostPolygonSet;
+typedef bp::point_data<int> BoostPoint;
+typedef bp::polygon_data<int> BoostPolygon;
+typedef bp::polygon_with_holes_data<int> BoostPolygonWithHoles;
+typedef bp::polygon_set_data<int> BoostPolygonSet;
 
 /**
  * @brief Адаптер для конвертации между пользовательскими типами (double) и типами Boost (long long).
@@ -26,18 +26,16 @@ class GeometryAdapter {
 public:
     GeometryAdapter();
 
-    // Масштабный коэффициент: double -> long long.
-    // Значение 10000.0 (10^4) дает точность 0.0001 мм.
-    // Deepnest использует 10^7, здесь для безопасности переполнения можно начать с 10^4 или 10^5.
+    // Масштабный коэффициент: double -> int.
     //эксперементирую со значениями
-    static constexpr double SCALE_FACTOR = 100000.0;
+    static constexpr double SCALE_FACTOR = 10000.0;
 
     /**
-     * @brief Конвертирует Point (double) в BoostPoint (long long).
+     * @brief Конвертирует Point (double) в BoostPoint (int).
      */
     static BoostPoint toBoost(const Point& p) {
-        return BoostPoint(static_cast<long long>(std::round(p.x * SCALE_FACTOR)),
-                          static_cast<long long>(std::round(p.y * SCALE_FACTOR)));
+        return BoostPoint(static_cast<int>(std::round(p.x * SCALE_FACTOR)),
+                          static_cast<int>(std::round(p.y * SCALE_FACTOR)));
     }
 
     /**

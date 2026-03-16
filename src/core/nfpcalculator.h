@@ -7,7 +7,7 @@
 
 class NFPCalculator {
 public:
-    static constexpr double NFP_SCALE = 100000.0;
+    static constexpr double NFP_SCALE = 10000.0;
 
     /**
      * @brief Вычисляет Outer NFP (No Fit Polygon).

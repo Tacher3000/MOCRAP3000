@@ -11,6 +11,7 @@
 #include <random>
 #include <cmath>
 #include <omp.h>
+#include <set>
 
 using namespace Clipper2Lib;
 
@@ -27,9 +28,9 @@ using namespace Clipper2Lib;
  * @param dx Сдвиг по X (в единицах Boost coordinates).
  * @param dy Сдвиг по Y (в единицах Boost coordinates).
  */
-static void moveBoostSet(BoostPolygonSet& set, long long dx, long long dy) {
+static void moveBoostSet(BoostPolygonSet& set, int dx, int dy) {
     namespace bp = boost::polygon;
-    std::vector<BoostPolygon> polys;
+    std::vector<BoostPolygonWithHoles> polys;
     set.get(polys);
     set.clear();
 
@@ -88,13 +89,23 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     m_config.populationSize = 20;
 
-    // --- КЭШИРОВАНИЕ ГЕОМЕТРИИ ---
-    // Мы заранее вычисляем все возможные варианты вращения деталей.
-    // Это критически важно для производительности decode().
+    // --- 1. ВЫДЕЛЕНИЕ УНИКАЛЬНЫХ ДЕТАЛЕЙ ---
+    // Так как при увеличении количества детали просто копируются с тем же ID,
+    // мы собираем список только уникальных форм, чтобы не делать лишнюю работу.
+    std::vector<Part> uniqueParts;
+    std::set<int> processedIds;
+    for (const auto& part : parts) {
+        if (processedIds.find(part.id) == processedIds.end()) {
+            uniqueParts.push_back(part);
+            processedIds.insert(part.id);
+        }
+    }
+
+    // --- 2. КЭШИРОВАНИЕ ГЕОМЕТРИИ ---
     // Ключ map: ID детали. Значение: Вектор из 4-х BoostPolygonSet (0, 90, 180, 270 градусов).
     std::map<int, std::vector<BoostPolygonSet>> rotatedPartsCache;
 
-    for(const auto& part : parts) {
+    for(const auto& part : uniqueParts) {
         BoostPolygonSet base = GeometryAdapter::toBoost(part);
         normalizePolySet(base);
 
@@ -110,17 +121,14 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         }
     }
 
-    // qDebug() << "Инициализация первичной популяции";
-    // --- 2. КЭШИРОВАНИЕ ПАРНЫХ NFP (Pairwise Batching) ---
-    // qDebug() << "Precalculating NFP Cache...";
+    // --- 3. КЭШИРОВАНИЕ ПАРНЫХ NFP (Pairwise Batching) ---
     NFPCacheType nfpCache;
 
-    // Распараллеливаем предварительный расчет (на твоем 5600X это пройдет за секунду)
     #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < static_cast<int>(parts.size()); ++i) {
-        for (int j = 0; j < static_cast<int>(parts.size()); ++j) {
-            const Part& partA = parts[i];
-            const Part& partB = parts[j];
+    for (int i = 0; i < static_cast<int>(uniqueParts.size()); ++i) {
+        for (int j = 0; j < static_cast<int>(uniqueParts.size()); ++j) {
+            const Part& partA = uniqueParts[i];
+            const Part& partB = uniqueParts[j];
 
             for (int rotA = 0; rotA < 4; ++rotA) {
                 for (int rotB = 0; rotB < 4; ++rotB) {
@@ -130,7 +138,6 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
                     BoostPolygonSet nfpBoost = NFPCalculator::calculateOuterNFP(polyA, polyB);
                     Paths64 nfpClipper = NFPCalculator::toClipper(nfpBoost);
 
-                    // Блокируем доступ для записи в мапу из разных потоков
                     #pragma omp critical
                     {
                         nfpCache[{partA.id, rotA, partB.id, rotB}] = nfpClipper;
@@ -249,26 +256,43 @@ void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int 
  */
 BoostPolygonSet GeneticOptimizer::rotatePolySet(const BoostPolygonSet& set, int angle) {
     namespace bp = boost::polygon;
-    std::vector<BoostPolygon> polys;
+    std::vector<BoostPolygonWithHoles> polys;
     set.get(polys);
     BoostPolygonSet result;
 
     for(const auto& p : polys) {
+        // 1. Вращаем внешний контур
         std::vector<BoostPoint> pts;
         for(auto it = bp::begin_points(p); it != bp::end_points(p); ++it) {
-            long long x = it->x();
-            long long y = it->y();
-            long long nx = x, ny = y;
-
+            int x = it->x(), y = it->y();
+            int nx = x, ny = y;
             if (angle == 90) { nx = -y; ny = x; }
             else if (angle == 180) { nx = -x; ny = -y; }
             else if (angle == 270) { nx = y; ny = -x; }
-
             pts.push_back(BoostPoint(nx, ny));
         }
-        BoostPolygon newP;
-        bp::set_points(newP, pts.begin(), pts.end());
-        result.insert(newP);
+        BoostPolygon newOuter;
+        bp::set_points(newOuter, pts.begin(), pts.end());
+        result.insert(newOuter);
+
+        // 2. Вращаем отверстия
+        BoostPolygonSet holesSet;
+        for (auto itHole = bp::begin_holes(p); itHole != bp::end_holes(p); ++itHole) {
+            std::vector<BoostPoint> hPts;
+            for (auto it = bp::begin_points(*itHole); it != bp::end_points(*itHole); ++it) {
+                int x = it->x(), y = it->y();
+                int nx = x, ny = y;
+                if (angle == 90) { nx = -y; ny = x; }
+                else if (angle == 180) { nx = -x; ny = -y; }
+                else if (angle == 270) { nx = y; ny = -x; }
+                hPts.push_back(BoostPoint(nx, ny));
+            }
+            BoostPolygon newHole;
+            bp::set_points(newHole, hPts.begin(), hPts.end());
+            holesSet.insert(newHole);
+        }
+        // Вычитаем повернутые отверстия из результата
+        result -= holesSet;
     }
     return result;
 }
@@ -279,12 +303,12 @@ BoostPolygonSet GeneticOptimizer::rotatePolySet(const BoostPolygonSet& set, int 
  */
 void GeneticOptimizer::normalizePolySet(BoostPolygonSet& set) {
     namespace bp = boost::polygon;
-    bp::rectangle_data<long long> rect;
+    bp::rectangle_data<int> rect;
 
     if (!bp::extents(rect, set)) return;
 
-    long long minX = bp::xl(rect);
-    long long minY = bp::yl(rect);
+    int minX = bp::xl(rect);
+    int minY = bp::yl(rect);
 
     if (minX == 0 && minY == 0) return;
 
@@ -321,8 +345,19 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
         std::map<int, double> sheetMaxY;
 
         for (const auto& pp : population[i].cachedSolution.placedParts) {
-            if (pp.x > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = pp.x;
-            if (pp.y > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = pp.y;
+            // if (pp.x > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = pp.x;
+            // if (pp.y > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = pp.y;
+
+            const BoostPolygonSet& pShape = rotatedPartsCache.at(pp.originalPartId)[static_cast<int>(pp.rotation / 90.0)];
+            namespace bp = boost::polygon;
+            bp::rectangle_data<int> r;
+            bp::extents(r, pShape);
+
+            double partRightX = pp.x + (static_cast<double>(bp::xh(r) - bp::xl(r)) / NFPCalculator::NFP_SCALE);
+            double partTopY = pp.y + (static_cast<double>(bp::yh(r) - bp::yl(r)) / NFPCalculator::NFP_SCALE);
+
+            if (partRightX > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = partRightX;
+            if (partTopY > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = partTopY;
         }
 
         for (const auto& pair : sheetMaxX) {
@@ -482,7 +517,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     };
 
     struct PlacedItem {
-        int id; int rotation; BoostPolygonSet poly; long long x, y;
+        int id; int rotation; BoostPolygonSet poly; int x, y;
     };
 
     struct SheetCtx {
@@ -509,16 +544,16 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         // qDebug() << "    [Decode] Placing part" << i << "(ID:" << originalPart.id << ")";
 
         namespace bp = boost::polygon;
-        bp::rectangle_data<long long> partRect;
+        bp::rectangle_data<int> partRect;
         bp::extents(partRect, partShape);
-        long long pW = bp::xh(partRect) - bp::xl(partRect);
-        long long pH = bp::yh(partRect) - bp::yl(partRect);
+        int pW = bp::xh(partRect) - bp::xl(partRect);
+        int pH = bp::yh(partRect) - bp::yl(partRect);
 
         bool placed = false;
 
         for (auto& sheet : sheets) {
-            long long sheetWidthLocal = static_cast<long long>(sheet.width * NFPCalculator::NFP_SCALE);
-            long long sheetHeightLocal = static_cast<long long>(sheet.height * NFPCalculator::NFP_SCALE);
+            int sheetWidthLocal = static_cast<int>(sheet.width * NFPCalculator::NFP_SCALE);
+            int sheetHeightLocal = static_cast<int>(sheet.height * NFPCalculator::NFP_SCALE);
 
             if (sheet.placedItems.empty()) {
                 if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
@@ -546,16 +581,16 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 }
             }
 
-            long long maxX = sheetWidthLocal - pW;
-            long long maxY = sheetHeightLocal - pH;
+            int maxX = sheetWidthLocal - pW;
+            int maxY = sheetHeightLocal - pH;
 
             if (maxX < 0 || maxY < 0) continue;
 
             Path64 innerNFPPath;
             innerNFPPath.push_back(Point64(0, 0));
-            innerNFPPath.push_back(Point64(maxX, 0LL));
+            innerNFPPath.push_back(Point64(maxX, 0));
             innerNFPPath.push_back(Point64(maxX, maxY));
-            innerNFPPath.push_back(Point64(0LL, maxY));
+            innerNFPPath.push_back(Point64(0, maxY));
 
             Paths64 innerNFPClipper;
             innerNFPClipper.push_back(innerNFPPath);
@@ -602,32 +637,68 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             Point64 bestPos;
             bool foundPos = false;
 
-            long long sheetMaxX = 0;
-            long long sheetMaxY = 0;
+            int sheetMaxX = 0;
+            int sheetMaxY = 0;
             for (const auto& item : sheet.placedItems) {
                 namespace bp = boost::polygon;
-                bp::rectangle_data<long long> r;
+                bp::rectangle_data<int> r;
                 if (bp::extents(r, item.poly)) {
                     sheetMaxX = std::max(sheetMaxX, bp::xh(r));
                     sheetMaxY = std::max(sheetMaxY, bp::yh(r));
                 }
             }
 
+            // for (const auto& path : innerNFPClipper) {
+            //     for (const auto& pt : path) {
+
+            //         if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
+            //             continue;
+            //         }
+
+            //         // int testMaxX = std::max(sheetMaxX, static_cast<int>(pt.x + pW));
+            //         // int testMaxY = std::max(sheetMaxY, static_cast<int>(pt.y + pH));
+
+            //         // double area = static_cast<double>(testMaxX) * static_cast<double>(testMaxY);
+
+            //         // double tieBreaker = static_cast<double>(pt.x) + static_cast<double>(pt.y);
+
+            //         // double score = area + tieBreaker * 0.001;
+
+            //         double score = (static_cast<double>(pt.x) * 10.0) + static_cast<double>(pt.y);
+
+            //         if (score < bestScore) {
+            //             bestScore = score;
+            //             bestPos = pt;
+            //             foundPos = true;
+            //         }
+            //     }
+            // }
+
+            // ШАГ 3: Гибридная оценка точки
+            // ШАГ 3: Поиск лучшей позиции в FinalNFP (Эвристика Bottom-Left + Bounding Box)
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
-
                     if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
                         continue;
                     }
 
-                    long long testMaxX = std::max(sheetMaxX, static_cast<long long>(pt.x + pW));
-                    long long testMaxY = std::max(sheetMaxY, static_cast<long long>(pt.y + pH));
+                    // 1. Оцениваем новые габариты (Bounding Box) листа с учетом этой детали
+                    int testMaxX = std::max(sheetMaxX, static_cast<int>(pt.x + pW));
+                    int testMaxY = std::max(sheetMaxY, static_cast<int>(pt.y + pH));
 
+                    // Площадь габаритного прямоугольника (главный штраф за расширение границ)
                     double area = static_cast<double>(testMaxX) * static_cast<double>(testMaxY);
 
-                    double tieBreaker = static_cast<double>(pt.x) + static_cast<double>(pt.y);
+                    // 2. Линейная гравитация Bottom-Left (Манхэттенское расстояние)
+                    // Заставляет деталь "проваливаться" в самые глубокие пазы других деталей.
+                    // В отличие от x^2 + y^2, линейная сумма не штрафует деталь экспоненциально
+                    // за скольжение вдоль длинной стороны листа.
+                    double blGravity = static_cast<double>(pt.x) + static_cast<double>(pt.y);
 
-                    double score = area + tieBreaker * 0.001;
+                    // 3. Итоговый счет: Площадь сохраняет общую компактность кластера,
+                    // а blGravity выступает идеальным "тай-брейкером" при равной площади,
+                    // затягивая детали типа "Г" друг в друга.
+                    double score = area + blGravity;
 
                     if (score < bestScore) {
                         bestScore = score;
@@ -674,8 +745,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 newSheet.width = nextS->width;
                 newSheet.height = nextS->height;
 
-                long long newSheetWLocal = static_cast<long long>(newSheet.width * NFPCalculator::NFP_SCALE);
-                long long newSheetHLocal = static_cast<long long>(newSheet.height * NFPCalculator::NFP_SCALE);
+                int newSheetWLocal = static_cast<int>(newSheet.width * NFPCalculator::NFP_SCALE);
+                int newSheetHLocal = static_cast<int>(newSheet.height * NFPCalculator::NFP_SCALE);
 
                 if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
                     PlacedItem newItem;

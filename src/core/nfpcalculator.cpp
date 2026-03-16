@@ -104,26 +104,39 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
  * @details
  * Outer NFP для пары полигонов A и B — это множество векторов трансляции,
  * при которых A и B пересекаются. Математически это сумма Минковского A ⊕ (-B).
- * * Мы используем портированный из Deepnest метод convolveTwoPolygonSets,
- * который корректно обрабатывает невыпуклые полигоны без образования "ложных пустот".
  */
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace boost::polygon;
 
     BoostPolygonSet B_negated;
-    std::vector<BoostPolygon> b_polys;
+    std::vector<BoostPolygonWithHoles> b_polys;
     B.get(b_polys);
 
-    for (auto& poly : b_polys) {
+    for (const auto& poly : b_polys) {
         std::vector<BoostPoint> pts;
         for (auto it = begin_points(poly); it != end_points(poly); ++it) {
             pts.push_back(BoostPoint(-it->x(), -it->y()));
         }
         BoostPolygon negPoly;
         set_points(negPoly, pts.begin(), pts.end());
-        B_negated.insert(negPoly);
-    }
 
+        BoostPolygonSet negHoles;
+        for (auto itHole = begin_holes(poly); itHole != end_holes(poly); ++itHole) {
+            std::vector<BoostPoint> hPts;
+            for (auto it = begin_points(*itHole); it != end_points(*itHole); ++it) {
+                hPts.push_back(BoostPoint(-it->x(), -it->y()));
+            }
+            BoostPolygon negHole;
+            set_points(negHole, hPts.begin(), hPts.end());
+            negHoles.insert(negHole);
+        }
+
+        BoostPolygonSet finalNegPoly;
+        finalNegPoly.insert(negPoly);
+        finalNegPoly -= negHoles;
+
+        B_negated += finalNegPoly;
+    }
 
     BoostPolygonSet result;
     convolveTwoPolygonSets(result, A, B_negated);
@@ -268,15 +281,15 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
         Part_negated.insert(negPoly);
     }
 
-    rectangle_data<long long> boundsA;
+    rectangle_data<int> boundsA;
     extents(boundsA, Sheet);
 
-    long long width = xh(boundsA) - xl(boundsA);
-    long long height = yh(boundsA) - yl(boundsA);
-    long long margin = std::max(width, height) * 10;
+    int width = xh(boundsA) - xl(boundsA);
+    int height = yh(boundsA) - yl(boundsA);
+    int margin = std::max(width, height) * 10;
     if (margin == 0) margin = 1000000;
 
-    rectangle_data<long long> universeRect = boundsA;
+    rectangle_data<int> universeRect = boundsA;
     bloat(universeRect, margin);
 
     BoostPolygonSet universe;
