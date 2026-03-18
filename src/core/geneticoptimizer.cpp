@@ -89,6 +89,11 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     m_config.populationSize = 20;
 
+    double offsetAmount = (params.partSpacing + params.cutThickness) / 2.0;
+    int boostOffset = static_cast<int>(offsetAmount * NFPCalculator::NFP_SCALE);
+
+    qDebug() << "Corrected boostOffset:" << boostOffset;
+
     // --- 1. ВЫДЕЛЕНИЕ УНИКАЛЬНЫХ ДЕТАЛЕЙ ---
     // Так как при увеличении количества детали просто копируются с тем же ID,
     // мы собираем список только уникальных форм, чтобы не делать лишнюю работу.
@@ -107,6 +112,11 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     for(const auto& part : uniqueParts) {
         BoostPolygonSet base = GeometryAdapter::toBoost(part);
+
+        if (boostOffset > 0) {
+            boost::polygon::bloat(base, boostOffset);
+        }
+
         normalizePolySet(base);
 
         rotatedPartsCache[part.id].resize(4);
@@ -534,6 +544,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         return solution;
     }
 
+    double offsetAmount = (params.partSpacing + params.cutThickness) / 2.0;
+
     for (size_t i = 0; i < ind.partIndices.size(); ++i) {
         int partIdx = ind.partIndices[i];
         int rotIdx = ind.rotations[i];
@@ -570,8 +582,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     pp.originalPartId = originalPart.id;
                     pp.sheetId = sheet.id;
                     pp.rotation = rotIdx * 90.0;
-                    pp.x = 0.0;
-                    pp.y = 0.0;
+                    pp.x = offsetAmount;
+                    pp.y = offsetAmount;
                     solution.placedParts.push_back(pp);
                     solution.partsMap[originalPart.id] = originalPart;
 
@@ -724,8 +736,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 pp.originalPartId = originalPart.id;
                 pp.sheetId = sheet.id;
                 pp.rotation = rotIdx * 90.0;
-                pp.x = static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE;
-                pp.y = static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE;
+                pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount;
+                pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount;
                 solution.placedParts.push_back(pp);
                 solution.partsMap[originalPart.id] = originalPart;
 
@@ -759,7 +771,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     PlacedPart pp;
                     pp.originalPartId = originalPart.id;
                     pp.sheetId = newSheet.id; pp.rotation = rotIdx * 90.0;
-                    pp.x = 0.0; pp.y = 0.0;
+                    pp.x = offsetAmount;
+                    pp.y = offsetAmount;
                     solution.placedParts.push_back(pp);
                     solution.partsMap[originalPart.id] = originalPart;
                 }

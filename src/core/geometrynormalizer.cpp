@@ -28,7 +28,7 @@ double distSq(const Point& a, const Point& b) {
     return dx*dx + dy*dy;
 }
 
-std::vector<Point> generateArcPoints(double cx, double cy, double r, double startAng, double endAng, bool ccw) {
+std::vector<Point> generateArcPoints(double cx, double cy, double r, double startAng, double endAng, bool ccw, bool isHole = false) {
     std::vector<Point> points;
 
     if (ccw) {
@@ -47,11 +47,22 @@ std::vector<Point> generateArcPoints(double cx, double cy, double r, double star
     if (std::isnan(stepAngle) || stepAngle < 0.01) stepAngle = 0.05;
 
     int steps = std::max(4, static_cast<int>(std::ceil(sweep / stepAngle)));
+    const int MAX_ARC_STEPS = 64;
+    if (steps > MAX_ARC_STEPS) {
+        steps = MAX_ARC_STEPS;
+    }
+
+    double actualStepAngle = sweep / steps;
+    double renderRadius = r;
+    if (!isHole) {
+        renderRadius = r / std::cos(actualStepAngle / 2.0);
+    }
 
     for (int i = 1; i < steps; ++i) {
         double t = static_cast<double>(i) / steps;
         double angle = startAng + (endAng - startAng) * t;
-        points.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
+        // points.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
+        points.push_back({cx + renderRadius * std::cos(angle), cy + renderRadius * std::sin(angle)});
     }
     return points;
 }

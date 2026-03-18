@@ -15,6 +15,8 @@ public:
     ParametersWidget(QWidget *parent = nullptr);
     NestingParameters getNestingParameters() const;
 
+protected:
+    void accept() override;
 private:
     QLineEdit *sheetWidth;
     QLineEdit *sheetHeight;

@@ -120,22 +120,7 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
         BoostPolygon negPoly;
         set_points(negPoly, pts.begin(), pts.end());
 
-        BoostPolygonSet negHoles;
-        for (auto itHole = begin_holes(poly); itHole != end_holes(poly); ++itHole) {
-            std::vector<BoostPoint> hPts;
-            for (auto it = begin_points(*itHole); it != end_points(*itHole); ++it) {
-                hPts.push_back(BoostPoint(-it->x(), -it->y()));
-            }
-            BoostPolygon negHole;
-            set_points(negHole, hPts.begin(), hPts.end());
-            negHoles.insert(negHole);
-        }
-
-        BoostPolygonSet finalNegPoly;
-        finalNegPoly.insert(negPoly);
-        finalNegPoly -= negHoles;
-
-        B_negated += finalNegPoly;
+        B_negated.insert(negPoly);
     }
 
     BoostPolygonSet result;
