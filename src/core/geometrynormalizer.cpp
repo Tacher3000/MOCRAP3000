@@ -52,17 +52,10 @@ std::vector<Point> generateArcPoints(double cx, double cy, double r, double star
         steps = MAX_ARC_STEPS;
     }
 
-    double actualStepAngle = sweep / steps;
-    double renderRadius = r;
-    if (!isHole) {
-        renderRadius = r / std::cos(actualStepAngle / 2.0);
-    }
-
     for (int i = 1; i < steps; ++i) {
         double t = static_cast<double>(i) / steps;
         double angle = startAng + (endAng - startAng) * t;
-        // points.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
-        points.push_back({cx + renderRadius * std::cos(angle), cy + renderRadius * std::sin(angle)});
+        points.push_back({cx + r * std::cos(angle), cy + r * std::sin(angle)});
     }
     return points;
 }
@@ -268,8 +261,8 @@ Polygon normalizePart(const Part& part) {
 
     // 3. Обработка дуг
     for (const auto& arc : part.arcs) {
-        double startRad = arc.startAngle * M_PI / 180.0;
-        double endRad = arc.endAngle * M_PI / 180.0;
+        double startRad = arc.startAngle;
+        double endRad = arc.endAngle;
         bool ccw = (arc.isCounterClockwise != 0);
 
         std::vector<Point> inter = generateArcPoints(arc.center.x, arc.center.y, arc.radius, startRad, endRad, ccw);

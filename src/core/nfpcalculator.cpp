@@ -108,6 +108,7 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace boost::polygon;
 
+    // 1. Отражение B (Negate B) - NFP(A, B) = Minkowski(A, -B)
     BoostPolygonSet B_negated;
     std::vector<BoostPolygonWithHoles> b_polys;
     B.get(b_polys);
@@ -119,14 +120,31 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
         }
         BoostPolygon negPoly;
         set_points(negPoly, pts.begin(), pts.end());
-
         B_negated.insert(negPoly);
     }
 
-    BoostPolygonSet result;
-    convolveTwoPolygonSets(result, A, B_negated);
+    // 2. Конвертация в Clipper2
+    Paths64 sub = toClipper(A);
+    Paths64 pat = toClipper(B_negated);
 
-    return result;
+    if (sub.empty() || pat.empty()) return BoostPolygonSet();
+
+    Paths64 solution;
+
+    // 3. Честная сумма Минковского (обводка контура по контуру)
+    for (const auto& pathA : sub) {
+        for (const auto& pathB : pat) {
+            Paths64 tmp = MinkowskiSum(pathB, pathA, true);
+            solution.insert(solution.end(), tmp.begin(), tmp.end());
+        }
+    }
+
+    // 4. Объединение с правилом NonZero гарантированно заливает внутренности
+    // и уничтожает ложные дырки (false holes) от вогнутостей.
+    Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
+
+    // 5. Конвертация обратно в Boost
+    return fromClipper(unifiedSolution);
 }
 
 /**

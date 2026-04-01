@@ -20,23 +20,26 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
     for (const auto& arc : part.arcs) {
         QPainterPath path;
 
-        double startAngleDeg = -arc.startAngle * 180.0 / pi;
-        double endAngleDeg = -arc.endAngle * 180.0 / pi;
+        double mathStart = arc.startAngle;
+        double mathEnd = arc.endAngle;
+        double mathSpan;
 
-        double spanAngleDeg;
         if (arc.isCounterClockwise) {
-            spanAngleDeg = endAngleDeg - startAngleDeg;
+            mathSpan = mathEnd - mathStart;
+            if (mathSpan <= 0) mathSpan += 2 * pi;
         } else {
-            spanAngleDeg = startAngleDeg - endAngleDeg;
-            spanAngleDeg = -spanAngleDeg;
+            mathSpan = mathEnd - mathStart;
+            if (mathSpan >= 0) mathSpan -= 2 * pi;
         }
-        QRectF rect(arc.center.x - arc.radius,
-                    arc.center.y - arc.radius,
-                    arc.radius * 2.0,
-                    arc.radius * 2.0);
 
-        path.arcMoveTo(rect, startAngleDeg);
-        path.arcTo(rect, startAngleDeg, spanAngleDeg);
+        double startAngleQt = -mathStart * 180.0 / pi;
+        double spanQt = -mathSpan * 180.0 / pi;
+
+        QRectF rect(arc.center.x - arc.radius, arc.center.y - arc.radius,
+                    arc.radius * 2.0, arc.radius * 2.0);
+
+        path.arcMoveTo(rect, startAngleQt);
+        path.arcTo(rect, startAngleQt, spanQt);
 
         QGraphicsPathItem* item = scene->addPath(path);
         item->setPen(pen);
@@ -67,18 +70,23 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
             size_t j = (i + 1) % poly.vertices.size();
             const auto& v1 = poly.vertices[i];
             const auto& v2 = poly.vertices[j];
-            double dx = v2.x - v1.x;
-            double dy = v2.y - v1.y;
 
             if (std::abs(v1.bulge) < 1e-10) {
                 path.lineTo(v2.x, v2.y);
             } else {
                 double bulge = v1.bulge;
+                double dx = v2.x - v1.x;
+                double dy = v2.y - v1.y;
                 bool ccw = bulge > 0;
                 double absBulge = std::abs(bulge);
 
                 double theta = 4 * std::atan(absBulge);
                 double chord = std::sqrt(dx * dx + dy * dy);
+
+                if (chord < 1e-9) {
+                    path.lineTo(v2.x, v2.y);
+                    continue;
+                }
 
                 double r = chord / (2 * std::sin(theta / 2.0));
                 double h = r * std::cos(theta / 2.0);
@@ -97,16 +105,20 @@ void GeometryPainter::drawPart(QGraphicsScene *scene, const Part& part, const QP
                 double cx = mx + h * ux;
                 double cy = my + h * uy;
 
-                double sa = std::atan2(v1.y - cy, v1.x - cx);
-
-                double span = theta * 180.0 / pi;
-
+                double sa_math = std::atan2(v1.y - cy, v1.x - cx);
+                double mathSpan = theta;
                 if (!ccw) {
-                    span = -span;
+                    mathSpan = -mathSpan;
                 }
 
-                path.arcTo(cx - r, cy - r, 2 * r, 2 * r, sa * 180.0 / pi, span);
+                double startAngleQt = -sa_math * 180.0 / pi;
+                double spanQt = -mathSpan * 180.0 / pi;
+
+                path.arcTo(cx - r, cy - r, 2 * r, 2 * r, startAngleQt, spanQt);
             }
+        }
+        if (closed) {
+            path.closeSubpath();
         }
         QGraphicsPathItem* item = scene->addPath(path);
         item->setPen(pen);

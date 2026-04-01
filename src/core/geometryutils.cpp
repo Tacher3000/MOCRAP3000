@@ -86,28 +86,31 @@ QPainterPath partToPath(const Part& part) {
     }
 
     for (const auto& circle : part.circles) {
-        path.addEllipse(QPointF(circle.center.x, circle.center.y),
-                        circle.radius, circle.radius);
+        path.addEllipse(QPointF(circle.center.x - circle.radius, circle.center.y - circle.radius),
+                        circle.radius * 2, circle.radius * 2);
     }
 
     for (const auto& arc : part.arcs) {
+        double mathStart = arc.startAngle;
+        double mathEnd = arc.endAngle;
+        double mathSpan;
+
+        if (arc.isCounterClockwise) {
+            mathSpan = mathEnd - mathStart;
+            if (mathSpan <= 0) mathSpan += 2 * M_PI;
+        } else {
+            mathSpan = mathEnd - mathStart;
+            if (mathSpan >= 0) mathSpan -= 2 * M_PI;
+        }
+
+        double startAngleQt = -mathStart * 180.0 / M_PI;
+        double spanQt = -mathSpan * 180.0 / M_PI;
+
         QRectF rect(arc.center.x - arc.radius, arc.center.y - arc.radius,
                     arc.radius * 2, arc.radius * 2);
 
-        double startAngle = arc.startAngle;
-        double endAngle = arc.endAngle;
-        double span = 0.0;
-
-        if (arc.isCounterClockwise) {
-            if (endAngle < startAngle) endAngle += 360.0;
-            span = endAngle - startAngle;
-        } else {
-            if (startAngle < endAngle) startAngle += 360.0;
-            span = endAngle - startAngle;
-        }
-
-        path.arcMoveTo(rect, startAngle);
-        path.arcTo(rect, startAngle, span);
+        path.arcMoveTo(rect, startAngleQt);
+        path.arcTo(rect, startAngleQt, spanQt);
     }
 
     for (const auto& poly : part.lwpolylines) {
@@ -116,35 +119,62 @@ QPainterPath partToPath(const Part& part) {
         QPainterPath polyPath;
         polyPath.moveTo(poly.vertices[0].x, poly.vertices[0].y);
 
-        for (size_t i = 0; i < poly.vertices.size(); ++i) {
-            size_t nextIdx = (i + 1) % poly.vertices.size();
-            if (!((poly.flags & 1)) && i == poly.vertices.size() - 1) break;
+        bool closed = (poly.flags & 1) != 0;
+        size_t numSegments = closed ? poly.vertices.size() : poly.vertices.size() - 1;
 
-            const auto& p1 = poly.vertices[i];
-            const auto& p2 = poly.vertices[nextIdx];
+        for (size_t i = 0; i < numSegments; ++i) {
+            size_t j = (i + 1) % poly.vertices.size();
+            const auto& v1 = poly.vertices[i];
+            const auto& v2 = poly.vertices[j];
 
-            if (std::abs(p1.bulge) < 1e-6) {
-                polyPath.lineTo(p2.x, p2.y);
+            if (std::abs(v1.bulge) < 1e-10) {
+                polyPath.lineTo(v2.x, v2.y);
             } else {
-                double dx = p2.x - p1.x;
-                double dy = p2.y - p1.y;
-                double dist = std::sqrt(dx*dx + dy*dy);
+                double bulge = v1.bulge;
+                double dx = v2.x - v1.x;
+                double dy = v2.y - v1.y;
+                bool ccw = bulge > 0;
+                double absBulge = std::abs(bulge);
 
-                if (dist < 1e-9) continue;
+                double theta = 4 * std::atan(absBulge);
+                double chord = std::sqrt(dx * dx + dy * dy);
 
-                double radius = dist * (1 + p1.bulge*p1.bulge) / (4 * std::abs(p1.bulge));
+                if (chord < 1e-9) {
+                    polyPath.lineTo(v2.x, v2.y);
+                    continue;
+                }
 
-                // Простейший способ нарисовать дугу - рассчитать промежуточную точку или использовать arcTo
-                // Но расчет параметров arcTo из bulge громоздкий.
-                // Для надежности здесь используем прямую линию, если bulge сложен,
-                // ИЛИ (лучше) добавляем сегмент.
-                // Чтобы не усложнять сейчас код, оставим линию, но корректно соединенную.
-                // В будущем сюда можно вернуть полную математику bulge.
-                polyPath.lineTo(p2.x, p2.y);
+                double r = chord / (2 * std::sin(theta / 2.0));
+                double h = r * std::cos(theta / 2.0);
+
+                double mx = (v1.x + v2.x) / 2.0;
+                double my = (v1.y + v2.y) / 2.0;
+
+                double ux = -dy / chord;
+                double uy = dx / chord;
+
+                if (!ccw) {
+                    ux = -ux;
+                    uy = -uy;
+                }
+
+                double cx = mx + h * ux;
+                double cy = my + h * uy;
+
+                double sa_math = std::atan2(v1.y - cy, v1.x - cx);
+                double mathSpan = theta;
+                if (!ccw) {
+                    mathSpan = -mathSpan;
+                }
+
+                double startAngleQt = -sa_math * 180.0 / M_PI;
+                double spanQt = -mathSpan * 180.0 / M_PI;
+
+                polyPath.arcTo(cx - r, cy - r, 2 * r, 2 * r, startAngleQt, spanQt);
             }
         }
 
-        if (poly.flags & 1) {
+        if (closed) {
             polyPath.closeSubpath();
         }
         path.addPath(polyPath);

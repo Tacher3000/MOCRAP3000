@@ -107,14 +107,15 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     }
 
     // --- 2. КЭШИРОВАНИЕ ГЕОМЕТРИИ ---
-    // Ключ map: ID детали. Значение: Вектор из 4-х BoostPolygonSet (0, 90, 180, 270 градусов).
     std::map<int, std::vector<BoostPolygonSet>> rotatedPartsCache;
 
     for(const auto& part : uniqueParts) {
         BoostPolygonSet base = GeometryAdapter::toBoost(part);
 
         if (boostOffset > 0) {
-            boost::polygon::bloat(base, boostOffset);
+            Paths64 clipBase = NFPCalculator::toClipper(base);
+            clipBase = InflatePaths(clipBase, boostOffset, JoinType::Round, EndType::Polygon);
+            base = NFPCalculator::fromClipper(clipBase);
         }
 
         normalizePolySet(base);
