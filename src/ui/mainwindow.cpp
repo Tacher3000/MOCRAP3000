@@ -68,6 +68,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     btnStartOptimization->setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #4CAF50; color: white; border-radius: 4px;");
     leftLayout->addWidget(btnStartOptimization);
 
+    btnStopOptimization = new QPushButton(tr("Остановить раскрой"), this);
+    btnStopOptimization->setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #f44336; color: white; border-radius: 4px;");
+    btnStopOptimization->setVisible(false);
+    leftLayout->addWidget(btnStopOptimization);
+    connect(btnStopOptimization, &QPushButton::clicked, this, &MainWindow::stopOptimization);
+
     mainSplitter->addWidget(leftPanel);
 
     viewersSplitter = new QSplitter(Qt::Vertical, this);
@@ -93,6 +99,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     connect(workerThread, &QThread::finished, worker, &QObject::deleteLater);
     connect(this, &MainWindow::startOptimizationRequested, worker, &OptimizationWorker::process);
+    connect(this, &MainWindow::stopOptimizationRequested, worker, &OptimizationWorker::stop, Qt::DirectConnection);
     connect(worker, &OptimizationWorker::finished, this, &MainWindow::onOptimizationFinished);
     connect(worker, &OptimizationWorker::errorOccurred, this, &MainWindow::onOptimizationError);
     connect(worker, &OptimizationWorker::progressUpdated, this, &MainWindow::onOptimizationProgress);
@@ -205,6 +212,8 @@ void MainWindow::startOptimization() {
 
     partList->setDisabled(true);
     btnStartOptimization->setDisabled(true);
+    btnStopOptimization->setVisible(true);
+    btnStopOptimization->setEnabled(true);
 
     statusLabel->setText(tr("Выполняется оптимизация..."));
     progressBar->setVisible(true);
@@ -226,9 +235,18 @@ void MainWindow::startOptimization() {
     emit startOptimizationRequested(activeGeometry, params);
 }
 
+void MainWindow::stopOptimization() {
+    btnStopOptimization->setEnabled(false);
+    statusLabel->setText(tr("Остановка оптимизации... Пожалуйста, подождите."));
+    emit stopOptimizationRequested();
+}
+
 void MainWindow::onOptimizationFinished(const NestingSolution &solution) {
     partList->setDisabled(false);
-    btnStartOptimization->setDisabled(false);
+    btnStartOptimization->setVisible(true);
+    btnStartOptimization->setEnabled(true);
+    btnStopOptimization->setVisible(false);
+    btnStopOptimization->setEnabled(true);
 
     statusLabel->setText(tr("Оптимизация завершена. Утилизация: %1%").arg(solution.utilization, 0, 'f', 2));
     progressBar->setVisible(false);
@@ -238,7 +256,10 @@ void MainWindow::onOptimizationFinished(const NestingSolution &solution) {
 
 void MainWindow::onOptimizationError(const QString &message) {
     partList->setDisabled(false);
-    btnStartOptimization->setDisabled(false);
+    btnStartOptimization->setVisible(true);
+    btnStartOptimization->setEnabled(true);
+    btnStopOptimization->setVisible(false);
+    btnStopOptimization->setEnabled(true);
 
     statusLabel->setText(tr("Ошибка оптимизации"));
     progressBar->setVisible(false);

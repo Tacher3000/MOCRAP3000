@@ -47,7 +47,8 @@ private:
                             const std::vector<Part>& parts,
                             const NestingParameters& params,
                             const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                            const NFPCacheType& nfpCache);
+                            const NFPCacheType& nfpCache,
+                            const std::atomic<bool>& stopFlag);
 
     Individual selection(const std::vector<Individual>& population);
     std::pair<Individual, Individual> crossover(const Individual& p1, const Individual& p2);

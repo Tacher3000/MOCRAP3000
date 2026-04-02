@@ -38,12 +38,17 @@ private slots:
     void onShowAllPartsRequested();
 
     void startOptimization();
+    void stopOptimization();
+
     void onOptimizationFinished(const NestingSolution &solution);
     void onOptimizationError(const QString &message);
     void onOptimizationProgress(const NestingSolution &solution);
 
+
+
 signals:
     void startOptimizationRequested(const Geometry geometry, const NestingParameters params);
+    void stopOptimizationRequested();
 
 private:
     void setupMenu();
@@ -52,6 +57,7 @@ private:
     ParametersWidget *parametersDialog;
     PartListWidget *partList;
     QPushButton *btnStartOptimization;
+    QPushButton *btnStopOptimization;
 
     ViewerWidget *viewer;
     LayoutViewerWidget *layoutViewer;

@@ -42,8 +42,6 @@ void OptimizationWorker::process(const Geometry geometry, const NestingParameter
             }
             );
 
-        if (m_stopRequested) return;
-
         emit finished(solution);
 
     } catch (const std::exception &e) {

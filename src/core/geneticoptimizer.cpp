@@ -137,7 +137,9 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(uniqueParts.size()); ++i) {
+        if (stopFlag) continue;
         for (int j = 0; j < static_cast<int>(uniqueParts.size()); ++j) {
+            if (stopFlag) continue;
             const Part& partA = uniqueParts[i];
             const Part& partB = uniqueParts[j];
 
@@ -163,7 +165,7 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     initializePopulation(parts, m_config.populationSize);
 
     // qDebug() << "Оценка первой популяции";
-    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache);
+    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, stopFlag);
 
     Individual bestInd = m_population[0];
     if (progressCallback) progressCallback(bestInd.cachedSolution);
@@ -197,7 +199,8 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         m_population = std::move(newPop);
 
         // qDebug() << "Evaluating population...";
-        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache);
+        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, stopFlag);
+        if (stopFlag) break;
         // qDebug() << "Evaluation finished.";
 
 
@@ -339,11 +342,13 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
                                           const std::vector<Part>& parts,
                                           const NestingParameters& params,
                                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                                          const NFPCacheType& nfpCache)
+                                          const NFPCacheType& nfpCache,
+                                          const std::atomic<bool>& stopFlag)
 {
 // Распараллеливаем цикл по индивидам
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(population.size()); ++i) {
+        if (stopFlag) continue;
         population[i].cachedSolution = decode(population[i], parts, params, rotatedPartsCache, nfpCache);
 
         double util = population[i].cachedSolution.utilization;
