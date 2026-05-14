@@ -139,6 +139,8 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
         }
     }
 
+    solution.insert(solution.end(), sub.begin(), sub.end());
+
     // 4. Объединение с правилом NonZero гарантированно заливает внутренности
     // и уничтожает ложные дырки (false holes) от вогнутостей.
     Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
@@ -408,7 +410,9 @@ Clipper2Lib::Paths64 NFPCalculator::toClipper(const BoostPolygonSet& set) {
 // }
 
 BoostPolygonSet NFPCalculator::fromClipper(const Clipper2Lib::Paths64& paths) {
-    BoostPolygonSet set;
+    BoostPolygonSet posSet;
+    BoostPolygonSet negSet;
+
     for (const auto& path : paths) {
         std::vector<BoostPoint> pts;
         for (const auto& p : path) {
@@ -418,7 +422,14 @@ BoostPolygonSet NFPCalculator::fromClipper(const Clipper2Lib::Paths64& paths) {
 
         BoostPolygon poly;
         boost::polygon::set_points(poly, pts.begin(), pts.end());
-        set.insert(poly);
+
+        if (Clipper2Lib::Area(path) > 0) {
+            posSet.insert(poly);
+        } else {
+            negSet.insert(poly);
+        }
     }
-    return set;
+
+    posSet -= negSet;
+    return posSet;
 }
