@@ -18,6 +18,7 @@ struct NestingParameters {
     std::vector<SheetRequest> sheets;
     double partSpacing = 0.0;
     double cutThickness = 0.0;
+    bool showRemnants = true;
 
     static NestingParameters fromStrings(
         const std::string& spacingStr,
@@ -61,6 +62,7 @@ struct NestingSolution {
     std::vector<NestingSheet> usedSheets;
     double utilization = 0.0;
     int generation = 0;
+    bool showRemnants = true;
 
     std::map<int, Part> partsMap;
 };

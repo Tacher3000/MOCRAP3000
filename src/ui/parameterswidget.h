@@ -6,6 +6,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QCheckBox>
 #include "../core/layoutstructures.h"
 
 class ParametersWidget : public QDialog {
@@ -22,6 +23,7 @@ private:
     QLineEdit *sheetHeight;
     QLineEdit *partSpacing;
     QLineEdit *cutThickness;
+    QCheckBox *showRemnantsCheck;
 
     QVBoxLayout *layout;
 };

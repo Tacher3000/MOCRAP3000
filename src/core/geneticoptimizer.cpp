@@ -826,6 +826,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     solution.utilization = (totalBoundingBoxArea > 0) ? (partsArea / totalBoundingBoxArea) * 100.0 : 0.0;
 
     // qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
-
+    solution.showRemnants = params.showRemnants;
     return solution;
 }

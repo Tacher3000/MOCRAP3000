@@ -174,21 +174,22 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
     for (const auto& sheet : solution.usedSheets) {
         scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, Qt::NoBrush);
 
-        QPen bboxPen(QColor(0, 100, 255, 180), 0, Qt::DashLine);
-        scene->addRect(currentSheetOffsetX, 0, sheet.usedWidth, sheet.usedHeight, bboxPen, Qt::NoBrush);
+        if (solution.showRemnants){
+            QPen bboxPen(QColor(0, 100, 255, 180), 0, Qt::DashLine);
+            scene->addRect(currentSheetOffsetX, 0, sheet.usedWidth, sheet.usedHeight, bboxPen, Qt::NoBrush);
 
-        double remX = sheet.width - sheet.usedWidth;
-        double remY = sheet.height - sheet.usedHeight;
-        QString infoText = QStringLiteral("Лист %1\nПолезный ост. X: %2 мм\nПолезный ост. Y: %3 мм")
-                               .arg(sheet.id)
-                               .arg(remX > 0 ? QString::number(remX, 'f', 1) : "0.0")
-                               .arg(remY > 0 ? QString::number(remY, 'f', 1) : "0.0");
+            double remX = sheet.width - sheet.usedWidth;
+            double remY = sheet.height - sheet.usedHeight;
+            QString infoText = QStringLiteral("Лист %1\nПолезный ост. X: %2 мм\nПолезный ост. Y: %3 мм")
+                                   .arg(sheet.id)
+                                   .arg(remX > 0 ? QString::number(remX, 'f', 1) : "0.0")
+                                   .arg(remY > 0 ? QString::number(remY, 'f', 1) : "0.0");
 
-        QGraphicsTextItem* t = scene->addText(infoText);
-        t->setDefaultTextColor(QColor(0, 120, 0));
-        t->setPos(currentSheetOffsetX, -45);
-        t->setTransform(QTransform::fromScale(1, -1), true);
-
+            QGraphicsTextItem* t = scene->addText(infoText);
+            t->setDefaultTextColor(QColor(0, 120, 0));
+            t->setPos(currentSheetOffsetX, -45);
+            t->setTransform(QTransform::fromScale(1, -1), true);
+        }
         currentSheetOffsetX += sheet.width + margin;
     }
 

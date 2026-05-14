@@ -16,6 +16,7 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
     QSettings settings("MOCRAP_Inc", "MOCRAP3000");
     QString savedSpacing = settings.value("nesting/partSpacing", "5.0").toString();
     QString savedThickness = settings.value("nesting/cutThickness", "2.0").toString();
+    bool savedShowRemnants = settings.value("nesting/showRemnants", true).toBool();
 
     QGroupBox *spacingGroup = new QGroupBox(tr("Отступы (мм)"), this);
     QHBoxLayout *spacingLayout = new QHBoxLayout(spacingGroup);
@@ -30,6 +31,10 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
 
     layout->addWidget(spacingGroup);
     layout->addStretch();
+
+    showRemnantsCheck = new QCheckBox(tr("Визуализировать полезные остатки"), this);
+    showRemnantsCheck->setChecked(savedShowRemnants);
+    layout->addWidget(showRemnantsCheck);
 
     QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
@@ -49,6 +54,7 @@ void ParametersWidget::accept() {
     QSettings settings("MOCRAP_Inc", "MOCRAP3000");
     settings.setValue("nesting/partSpacing", partSpacing->text());
     settings.setValue("nesting/cutThickness", cutThickness->text());
+    settings.setValue("nesting/showRemnants", showRemnantsCheck->isChecked());
 
     QDialog::accept();
 }
@@ -58,6 +64,7 @@ NestingParameters ParametersWidget::getNestingParameters() const {
 
     params.partSpacing = partSpacing->text().replace(',', '.').toDouble();
     params.cutThickness = cutThickness->text().replace(',', '.').toDouble();
+    params.showRemnants = showRemnantsCheck->isChecked();
 
     return params;
 }
