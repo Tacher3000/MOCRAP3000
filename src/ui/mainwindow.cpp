@@ -250,7 +250,7 @@ void MainWindow::onOptimizationFinished(const NestingSolution &solution) {
     btnStopOptimization->setVisible(false);
     btnStopOptimization->setEnabled(true);
 
-    statusLabel->setText(tr("Оптимизация завершена. Утилизация: %1%").arg(solution.utilization, 0, 'f', 2));
+    statusLabel->setText(tr("Оптимизация завершена. Плотность укладки: %1%").arg(solution.utilization, 0, 'f', 2));
     progressBar->setVisible(false);
 
     layoutViewer->setLayoutSolution(solution);
@@ -272,7 +272,7 @@ void MainWindow::onOptimizationError(const QString &message) {
 }
 
 void MainWindow::onOptimizationProgress(const NestingSolution &solution) {
-    statusLabel->setText(tr("Поколение: %1. Утилизация: %2%")
+    statusLabel->setText(tr("Поколение: %1. Плотность укладки: %2%")
                              .arg(solution.generation)
                              .arg(solution.utilization, 0, 'f', 2));
     layoutViewer->setLayoutSolution(solution);

@@ -44,6 +44,8 @@ struct NestingSheet {
     int id = 0;
     double width = 0.0;
     double height = 0.0;
+    double usedWidth = 0.0;
+    double usedHeight = 0.0;
 };
 
 struct PlacedPart {

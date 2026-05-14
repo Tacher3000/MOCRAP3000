@@ -21,7 +21,7 @@ LayoutViewerWidget::LayoutViewerWidget(QWidget *parent) : QWidget(parent) {
     QHBoxLayout *sliderLayout = new QHBoxLayout();
     sliderLayout->setContentsMargins(5, 5, 5, 5);
 
-    sliderLabel = new QLabel(tr("Поколение: 0 / 0 (Утилизация: 0%)"), this);
+    sliderLabel = new QLabel(tr("Поколение: 0 / 0 (Плотность укладки: 0%)"), this);
     sliderLabel->setMinimumWidth(250);
 
     historySlider = new QSlider(Qt::Horizontal, this);
@@ -78,7 +78,7 @@ void LayoutViewerWidget::showSolution(int index) {
     int currentGen = sol.generation;
     int maxGen = solutionHistory.back().generation;
 
-    sliderLabel->setText(tr("Поколение: %1 / %2 (Утилизация: %3%)")
+    sliderLabel->setText(tr("Поколение: %1 / %2 (Плотность укладки: %3%)")
                              .arg(currentGen)
                              .arg(maxGen)
                              .arg(sol.utilization, 0, 'f', 2));

@@ -788,22 +788,42 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         }
     }
 
-    double totalArea = 0;
-    double partsArea = 0;
+    double totalBoundingBoxArea = 0.0;
+    double partsArea = 0.0;
 
     for (const auto& sheet : sheets) {
         if (sheet.placedItems.empty()) continue;
 
-        solution.usedSheets.push_back({sheet.id, sheet.width, sheet.height});
-        totalArea += sheet.width * sheet.height;
+        int maxBoostX = 0;
+        int maxBoostY = 0;
+        double sheetPartsArea = 0.0;
 
         for (const auto& item : sheet.placedItems) {
-            double area = boost::polygon::area(rotatedPartsCache.at(parts[item.id].id)[item.rotation]);
-            partsArea += area / (NFPCalculator::NFP_SCALE * NFPCalculator::NFP_SCALE);
+            namespace bp = boost::polygon;
+            bp::rectangle_data<int> r;
+            if (bp::extents(r, item.poly)) {
+                maxBoostX = std::max(maxBoostX, bp::xh(r));
+                maxBoostY = std::max(maxBoostY, bp::yh(r));
+            }
+            sheetPartsArea += boost::polygon::area(rotatedPartsCache.at(parts[item.id].id)[item.rotation]);
         }
+
+        double realMaxX = (static_cast<double>(maxBoostX) / NFPCalculator::NFP_SCALE) + offsetAmount;
+        double realMaxY = (static_cast<double>(maxBoostY) / NFPCalculator::NFP_SCALE) + offsetAmount;
+
+        NestingSheet ns;
+        ns.id = sheet.id;
+        ns.width = sheet.width;
+        ns.height = sheet.height;
+        ns.usedWidth = realMaxX;
+        ns.usedHeight = realMaxY;
+        solution.usedSheets.push_back(ns);
+
+        totalBoundingBoxArea += (realMaxX * realMaxY);
+        partsArea += sheetPartsArea / (NFPCalculator::NFP_SCALE * NFPCalculator::NFP_SCALE);
     }
 
-    solution.utilization = (totalArea > 0) ? (partsArea / totalArea) * 100.0 : 0.0;
+    solution.utilization = (totalBoundingBoxArea > 0) ? (partsArea / totalBoundingBoxArea) * 100.0 : 0.0;
 
     // qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
 
