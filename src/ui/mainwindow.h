@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QThread>
 #include "../core/inputmanager.h"
+#include "../core/outputmanager.h"
 #include "../core/layoutoptimizer.h"
 #include "../core/optimizationworker.h"
 
@@ -69,7 +70,11 @@ private:
     QProgressBar *progressBar;
 
     InputManager inputManager;
+    OutputManager outputManager;
     Geometry currentGeometry;
+
+    NestingSolution m_lastSolution;
+    bool m_hasSolution = false;
 
     QThread* workerThread = nullptr;
     OptimizationWorker* worker = nullptr;

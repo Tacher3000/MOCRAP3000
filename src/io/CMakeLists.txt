@@ -5,6 +5,7 @@ file(GLOB LIBDXFRW_SOURCES
 
 add_library(IoLib STATIC
     dxfreader.h dxfreader.cpp
+    dxfexporter.h dxfexporter.cpp
     ${LIBDXFRW_SOURCES}
 )
 
@@ -16,6 +17,7 @@ target_include_directories(IoLib PUBLIC
 
 target_link_libraries(IoLib PRIVATE
     Qt6::Core
+    Qt6::Gui
 )
 
 target_compile_features(IoLib PRIVATE cxx_std_20)

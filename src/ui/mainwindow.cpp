@@ -183,6 +183,8 @@ void MainWindow::clearAll() {
     currentGeometry.parts.clear();
     partList->clear();
     viewer->setGeometry(currentGeometry);
+    m_hasSolution = false;
+    m_lastSolution = NestingSolution();
     statusLabel->setText(tr("Список деталей полностью очищен."));
 }
 
@@ -252,6 +254,8 @@ void MainWindow::onOptimizationFinished(const NestingSolution &solution) {
     progressBar->setVisible(false);
 
     layoutViewer->setLayoutSolution(solution);
+    m_lastSolution = solution;
+    m_hasSolution = true;
 }
 
 void MainWindow::onOptimizationError(const QString &message) {
@@ -272,16 +276,31 @@ void MainWindow::onOptimizationProgress(const NestingSolution &solution) {
                              .arg(solution.generation)
                              .arg(solution.utilization, 0, 'f', 2));
     layoutViewer->setLayoutSolution(solution);
+    m_lastSolution = solution;
+    m_hasSolution = true;
 }
 
 void MainWindow::saveFile() {
-    QMessageBox::information(this, tr("Сохранение"), tr("Функция сохранения раскройки будет реализована позже."));
+    saveAsFile();
 }
 
 void MainWindow::saveAsFile() {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Сохранить раскройку как"), QString(), tr("Layout Files (*.lay);;All Files (*)"));
+    if (!m_hasSolution || m_lastSolution.placedParts.empty()) {
+        QMessageBox::warning(this, tr("Предупреждение"), tr("Нет готовой раскройки для сохранения. Сначала запустите оптимизацию."));
+        return;
+    }
+
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Сохранить раскройку как"), QString(), tr("DXF Files (*.dxf)"));
     if (!fileName.isEmpty()) {
-        QMessageBox::information(this, tr("Сохранение"), tr("Функция сохранения раскройки будет реализована позже."));
+        if (!fileName.endsWith(".dxf", Qt::CaseInsensitive)) {
+            fileName += ".dxf";
+        }
+
+        if (outputManager.exportDxf(m_lastSolution, fileName.toStdString())) {
+            QMessageBox::information(this, tr("Успех"), tr("Раскройка успешно сохранена в файл:\n%1").arg(fileName));
+        } else {
+            QMessageBox::critical(this, tr("Ошибка"), tr("Не удалось сохранить файл. Проверьте права доступа."));
+        }
     }
 }
 

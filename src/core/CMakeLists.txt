@@ -51,6 +51,7 @@ add_library(CoreLib STATIC
     geneticoptimizer.h geneticoptimizer.cpp
     geometryadapter.h geometryadapter.cpp
     nfpcalculator.h nfpcalculator.cpp
+    outputmanager.h outputmanager.cpp
 )
 
 target_include_directories(CoreLib PUBLIC
