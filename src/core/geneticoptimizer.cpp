@@ -651,77 +651,73 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             // Нам нужно выбрать ОДНУ точку.
             // Эвристика: Left-Bottom (минимальный X, при равенстве - минимальный Y).
 
-            double bestScore = std::numeric_limits<double>::max();
+            double bestScoreX = std::numeric_limits<double>::max();
+            double bestScoreY = std::numeric_limits<double>::max();
+            double bestContactScore = -1.0;
             Point64 bestPos;
             bool foundPos = false;
 
-            int sheetMaxX = 0;
-            int sheetMaxY = 0;
+            struct PlacedBBox {
+                double minX, minY, maxX, maxY;
+            };
+
+            std::vector<PlacedBBox> placedBoxes;
+            placedBoxes.reserve(sheet.placedItems.size());
+
             for (const auto& item : sheet.placedItems) {
                 namespace bp = boost::polygon;
                 bp::rectangle_data<int> r;
                 if (bp::extents(r, item.poly)) {
-                    sheetMaxX = std::max(sheetMaxX, bp::xh(r));
-                    sheetMaxY = std::max(sheetMaxY, bp::yh(r));
+                    placedBoxes.emplace_back(
+                        static_cast<double>(bp::xl(r)), static_cast<double>(bp::yl(r)),
+                        static_cast<double>(bp::xh(r)), static_cast<double>(bp::yh(r))
+                        );
                 }
             }
 
-            // for (const auto& path : innerNFPClipper) {
-            //     for (const auto& pt : path) {
+            constexpr double epsilon = 1e-5;
+            constexpr double contactDilation = 50.0 * NFPCalculator::NFP_SCALE;
 
-            //         if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
-            //             continue;
-            //         }
-
-            //         // int testMaxX = std::max(sheetMaxX, static_cast<int>(pt.x + pW));
-            //         // int testMaxY = std::max(sheetMaxY, static_cast<int>(pt.y + pH));
-
-            //         // double area = static_cast<double>(testMaxX) * static_cast<double>(testMaxY);
-
-            //         // double tieBreaker = static_cast<double>(pt.x) + static_cast<double>(pt.y);
-
-            //         // double score = area + tieBreaker * 0.001;
-
-            //         double score = (static_cast<double>(pt.x) * 10.0) + static_cast<double>(pt.y);
-
-            //         if (score < bestScore) {
-            //             bestScore = score;
-            //             bestPos = pt;
-            //             foundPos = true;
-            //         }
-            //     }
-            // }
-
-            // ШАГ 3: Гибридная оценка точки
-            // ШАГ 3: Поиск лучшей позиции в FinalNFP (Эвристика Bottom-Left + Bounding Box)
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
                     if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
                         continue;
                     }
 
-                    // 1. Оцениваем новые габариты (Bounding Box) листа с учетом этой детали
-                    int testMaxX = std::max(sheetMaxX, static_cast<int>(pt.x + pW));
-                    int testMaxY = std::max(sheetMaxY, static_cast<int>(pt.y + pH));
+                    double currentX = static_cast<double>(pt.x);
+                    double currentY = static_cast<double>(pt.y);
 
-                    // Площадь габаритного прямоугольника (главный штраф за расширение границ)
-                    double area = static_cast<double>(testMaxX) * static_cast<double>(testMaxY);
+                    bool isBetterBL = currentX < bestScoreX - epsilon ||
+                                      (std::abs(currentX - bestScoreX) <= epsilon && currentY < bestScoreY - epsilon);
 
-                    // 2. Линейная гравитация Bottom-Left (Манхэттенское расстояние)
-                    // Заставляет деталь "проваливаться" в самые глубокие пазы других деталей.
-                    // В отличие от x^2 + y^2, линейная сумма не штрафует деталь экспоненциально
-                    // за скольжение вдоль длинной стороны листа.
-                    double blGravity = static_cast<double>(pt.x) + static_cast<double>(pt.y);
+                    bool isEqualBL = std::abs(currentX - bestScoreX) <= epsilon &&
+                                     std::abs(currentY - bestScoreY) <= epsilon;
 
-                    // 3. Итоговый счет: Площадь сохраняет общую компактность кластера,
-                    // а blGravity выступает идеальным "тай-брейкером" при равной площади,
-                    // затягивая детали типа "Г" друг в друга.
-                    double score = area + blGravity;
+                    if (isBetterBL || isEqualBL) {
+                        double contactScore = 0.0;
+                        double partMinX = currentX;
+                        double partMinY = currentY;
+                        double partMaxX = currentX + static_cast<double>(pW);
+                        double partMaxY = currentY + static_cast<double>(pH);
 
-                    if (score < bestScore) {
-                        bestScore = score;
-                        bestPos = pt;
-                        foundPos = true;
+                        for (const auto& box : placedBoxes) {
+                            double interLeft = std::max(partMinX, box.minX - contactDilation);
+                            double interTop = std::max(partMinY, box.minY - contactDilation);
+                            double interRight = std::min(partMaxX, box.maxX + contactDilation);
+                            double interBottom = std::min(partMaxY, box.maxY + contactDilation);
+
+                            if (interLeft < interRight && interTop < interBottom) {
+                                contactScore += (interRight - interLeft) * (interBottom - interTop);
+                            }
+                        }
+
+                        if (isBetterBL || contactScore > bestContactScore) {
+                            bestScoreX = currentX;
+                            bestScoreY = currentY;
+                            bestContactScore = contactScore;
+                            bestPos = pt;
+                            foundPos = true;
+                        }
                     }
                 }
             }

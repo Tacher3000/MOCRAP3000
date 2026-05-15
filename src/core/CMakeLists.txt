@@ -36,7 +36,6 @@ if(NOT boost_POPULATED)
     FetchContent_Populate(Boost)
 endif()
 
-# Явно задаем путь, по аналогии с Clipper2
 set(BOOST_INCLUDE_DIR "${boost_SOURCE_DIR}/boost")
 
 add_library(CoreLib STATIC
