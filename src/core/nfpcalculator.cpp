@@ -413,17 +413,22 @@ BoostPolygonSet NFPCalculator::fromClipper(const Clipper2Lib::Paths64& paths) {
     BoostPolygonSet posSet;
     BoostPolygonSet negSet;
 
-    for (const auto& path : paths) {
+    Clipper2Lib::Paths64 unifiedPaths = Clipper2Lib::Union(paths, Clipper2Lib::FillRule::NonZero);
+
+    for (const auto& path : unifiedPaths) {
         std::vector<BoostPoint> pts;
+        pts.reserve(path.size() + 1);
         for (const auto& p : path) {
-            pts.push_back(BoostPoint(p.x, p.y));
+            pts.emplace_back(p.x, p.y);
         }
-        if (!pts.empty() && pts.front() != pts.back()) pts.push_back(pts.front());
+        if (!pts.empty() && pts.front() != pts.back()) {
+            pts.push_back(pts.front());
+        }
 
         BoostPolygon poly;
         boost::polygon::set_points(poly, pts.begin(), pts.end());
 
-        if (Clipper2Lib::Area(path) > 0) {
+        if (Clipper2Lib::IsPositive(path)) {
             posSet.insert(poly);
         } else {
             negSet.insert(poly);

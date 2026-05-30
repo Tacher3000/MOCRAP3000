@@ -382,6 +382,13 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
         }
         fitness += boundingBoxPenalty;
 
+        size_t placedCount = population[i].cachedSolution.placedParts.size();
+        size_t expectedCount = population[i].partIndices.size();
+
+        if (placedCount < expectedCount) {
+            fitness += static_cast<double>(expectedCount - placedCount) * 1e9;
+        }
+
         if (util < 1e-5) fitness += 1e9;
 
         population[i].fitness = fitness;
@@ -751,35 +758,38 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
         if (!placed) {
             AvailableSheet* nextS = getNextSheet();
+            bool placedOnNewSheet = false;
+
             if (nextS) {
                 if (!nextS->isInfinite) nextS->remaining--;
 
-                SheetCtx newSheet;
-                newSheet.id = static_cast<int>(sheets.size()) + 1;
-                newSheet.width = nextS->width;
-                newSheet.height = nextS->height;
+                SheetCtx newSheet{
+                    static_cast<int>(sheets.size()) + 1,
+                    {},
+                    nextS->width,
+                    nextS->height
+                };
 
                 int newSheetWLocal = static_cast<int>(newSheet.width * NFPCalculator::NFP_SCALE);
                 int newSheetHLocal = static_cast<int>(newSheet.height * NFPCalculator::NFP_SCALE);
 
                 if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
-                    PlacedItem newItem;
-                    newItem.id = partIdx; newItem.rotation = rotIdx;
-                    newItem.x = 0; newItem.y = 0; newItem.poly = partShape;
-
+                    PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
                     newSheet.placedItems.push_back(newItem);
                     sheets.push_back(newSheet);
 
-                    PlacedPart pp;
-                    pp.originalPartId = originalPart.id;
-                    pp.sheetId = newSheet.id; pp.rotation = rotIdx * 90.0;
+                    PlacedPart pp{originalPart.id, newSheet.id, 0.0, 0.0, rotIdx * 90.0};
                     pp.x = offsetAmount;
                     pp.y = offsetAmount;
+
                     solution.placedParts.push_back(pp);
                     solution.partsMap[originalPart.id] = originalPart;
+                    placedOnNewSheet = true;
                 }
-            } else {
-                // qWarning() << "Закончились листы на складе! Деталь не размещена.";
+            }
+
+            if (!placedOnNewSheet) {
+                solution.unplacedPartIds.push_back(originalPart.id);
             }
         }
     }
