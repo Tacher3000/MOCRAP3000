@@ -107,6 +107,8 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     }
 
     // --- 2. КЭШИРОВАНИЕ ГЕОМЕТРИИ ---
+    int rotCount = std::max(1, params.allowedRotations);
+    double angleStep = 360.0 / rotCount;
     std::map<int, std::vector<BoostPolygonSet>> rotatedPartsCache;
 
     for(const auto& part : uniqueParts) {
@@ -120,13 +122,12 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
         normalizePolySet(base);
 
-        rotatedPartsCache[part.id].resize(4);
-
-        for(int r = 0; r < 4; ++r) {
+        rotatedPartsCache[part.id].resize(rotCount);
+        for(int r = 0; r < rotCount; ++r) {
             if (r == 0) {
                 rotatedPartsCache[part.id][r] = base;
             } else {
-                rotatedPartsCache[part.id][r] = rotatePolySet(base, r * 90);
+                rotatedPartsCache[part.id][r] = rotatePolySet(base, r * angleStep);
                 normalizePolySet(rotatedPartsCache[part.id][r]);
             }
         }
@@ -143,8 +144,8 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
             const Part& partA = uniqueParts[i];
             const Part& partB = uniqueParts[j];
 
-            for (int rotA = 0; rotA < 4; ++rotA) {
-                for (int rotB = 0; rotB < 4; ++rotB) {
+            for (int rotA = 0; rotA < rotCount; ++rotA) {
+                for (int rotB = 0; rotB < rotCount; ++rotB) {
                     const auto& polyA = rotatedPartsCache.at(partA.id)[rotA];
                     const auto& polyB = rotatedPartsCache.at(partB.id)[rotB];
 
@@ -162,7 +163,7 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     qDebug() << "NFP Cache ready! Entries:" << nfpCache.size();
 
     qDebug() << "Инициализация первичной популяции";
-    initializePopulation(parts, m_config.populationSize);
+    initializePopulation(parts, m_config.populationSize, rotCount);
 
     // qDebug() << "Оценка первой популяции";
     evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, stopFlag);
@@ -188,8 +189,8 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
             std::pair<Individual, Individual> children = crossover(p1, p2);
 
-            mutate(children.first);
-            mutate(children.second);
+            mutate(children.first, rotCount);
+            mutate(children.second, rotCount);
 
             newPop.push_back(children.first);
             if(newPop.size() < static_cast<size_t>(m_config.populationSize))
@@ -230,33 +231,48 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
  * - Первый индивид ("Адам") создается по эвристике "Сначала крупные". Это дает хороший старт.
  * - Остальные индивиды создаются случайным перемешиванием порядка и вращений.
  */
-void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int popSize) {
+void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int popSize, int allowedRotations) {
     m_population.clear();
     int numParts = static_cast<int>(parts.size());
 
-    std::vector<std::pair<int, double>> sortedParts(numParts);
-    for(int i=0; i<numParts; ++i) {
+    struct PartStat { int id; double area; double length; };
+    std::vector<PartStat> stats(numParts);
+
+    for (int i = 0; i < numParts; ++i) {
         BoostPolygonSet ps = GeometryAdapter::toBoost(parts[i]);
-        sortedParts[i] = {i, boost::polygon::area(ps)};
+        namespace bp = boost::polygon;
+        bp::rectangle_data<int> r;
+        bp::extents(r, ps);
+        stats[i] = {
+            i,
+            static_cast<double>(bp::area(ps)),
+            static_cast<double>(std::max(bp::xh(r) - bp::xl(r), bp::yh(r) - bp::yl(r)))
+        };
     }
-    std::sort(sortedParts.begin(), sortedParts.end(), [](auto& a, auto& b){
-        return a.second > b.second;
-    });
 
-    Individual adam;
-    adam.partIndices.resize(numParts);
-    adam.rotations.resize(numParts, 0);
+    Individual baseInd;
+    baseInd.partIndices.resize(numParts);
+    baseInd.rotations.resize(numParts, 0);
 
-    for(int i=0; i<numParts; ++i) adam.partIndices[i] = sortedParts[i].first;
+    // Индивид 1: Сортировка по убыванию площади
+    auto areaSorted = stats;
+    std::ranges::sort(areaSorted, std::greater<>{}, &PartStat::area);
+    for (int i = 0; i < numParts; ++i) baseInd.partIndices[i] = areaSorted[i].id;
+    m_population.push_back(baseInd);
 
-    m_population.push_back(adam);
+    // Индивид 2: Сортировка по убыванию максимального габарита
+    auto lengthSorted = stats;
+    std::ranges::sort(lengthSorted, std::greater<>{}, &PartStat::length);
+    for (int i = 0; i < numParts; ++i) baseInd.partIndices[i] = lengthSorted[i].id;
+    m_population.push_back(baseInd);
 
-    for(int i=1; i<popSize; ++i) {
-        Individual ind = adam;
-        std::shuffle(ind.partIndices.begin(), ind.partIndices.end(), m_rng);
-        std::uniform_int_distribution<int> rotDist(0, 3);
-        for(auto& r : ind.rotations) r = rotDist(m_rng);
-        m_population.push_back(ind);
+    // Остальные особи: случайные мутации базовых
+    std::uniform_int_distribution<int> rotDist(0, std::max(0, allowedRotations - 1));
+    for (int i = 2; i < popSize; ++i) {
+        Individual ind = m_population[0];
+        std::ranges::shuffle(ind.partIndices, m_rng);
+        for (auto& r : ind.rotations) r = rotDist(m_rng);
+        m_population.push_back(std::move(ind));
     }
 }
 
@@ -268,44 +284,45 @@ void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int 
  * - 180 deg: (x, y) -> (-x, -y)
  * - 270 deg: (x, y) -> (y, -x)
  */
-BoostPolygonSet GeneticOptimizer::rotatePolySet(const BoostPolygonSet& set, int angle) {
+BoostPolygonSet GeneticOptimizer::rotatePolySet(const BoostPolygonSet& set, double angleDeg) {
     namespace bp = boost::polygon;
     std::vector<BoostPolygonWithHoles> polys;
     set.get(polys);
     BoostPolygonSet result;
 
+    double rad = angleDeg * M_PI / 180.0;
+    double cosA = std::cos(rad);
+    double sinA = std::sin(rad);
+
     for(const auto& p : polys) {
-        // 1. Вращаем внешний контур
         std::vector<BoostPoint> pts;
         for(auto it = bp::begin_points(p); it != bp::end_points(p); ++it) {
-            int x = it->x(), y = it->y();
-            int nx = x, ny = y;
-            if (angle == 90) { nx = -y; ny = x; }
-            else if (angle == 180) { nx = -x; ny = -y; }
-            else if (angle == 270) { nx = y; ny = -x; }
-            pts.push_back(BoostPoint(nx, ny));
+            double x = it->x();
+            double y = it->y();
+            pts.push_back(BoostPoint(
+                static_cast<int>(std::round(x * cosA - y * sinA)),
+                static_cast<int>(std::round(x * sinA + y * cosA))
+                ));
         }
         BoostPolygon newOuter;
         bp::set_points(newOuter, pts.begin(), pts.end());
         result.insert(newOuter);
 
-        // 2. Вращаем отверстия
         BoostPolygonSet holesSet;
         for (auto itHole = bp::begin_holes(p); itHole != bp::end_holes(p); ++itHole) {
             std::vector<BoostPoint> hPts;
             for (auto it = bp::begin_points(*itHole); it != bp::end_points(*itHole); ++it) {
-                int x = it->x(), y = it->y();
-                int nx = x, ny = y;
-                if (angle == 90) { nx = -y; ny = x; }
-                else if (angle == 180) { nx = -x; ny = -y; }
-                else if (angle == 270) { nx = y; ny = -x; }
-                hPts.push_back(BoostPoint(nx, ny));
+                double x = it->x();
+                double y = it->y();
+                hPts.push_back(BoostPoint(
+                    static_cast<int>(std::round(x * cosA - y * sinA)),
+                    static_cast<int>(std::round(x * sinA + y * cosA))
+                    ));
             }
             BoostPolygon newHole;
             bp::set_points(newHole, hPts.begin(), hPts.end());
             holesSet.insert(newHole);
         }
-        // Вычитаем повернутые отверстия из результата
         result -= holesSet;
     }
     return result;
@@ -349,49 +366,54 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(population.size()); ++i) {
         if (stopFlag) continue;
-        population[i].cachedSolution = decode(population[i], parts, params, rotatedPartsCache, nfpCache);
 
-        double util = population[i].cachedSolution.utilization;
-        double fitness = 0.0;
+        auto& ind = population[i];
+        ind.cachedSolution = decode(ind, parts, params, rotatedPartsCache, nfpCache);
 
-        fitness += population[i].cachedSolution.usedSheets.size() * 1000000.0;
+        double fitness = ind.cachedSolution.usedSheets.size() * 1e6;
+        double centerOfMassPenalty = 0.0;
 
-        double boundingBoxPenalty = 0.0;
         std::map<int, double> sheetMaxX;
         std::map<int, double> sheetMaxY;
 
-        for (const auto& pp : population[i].cachedSolution.placedParts) {
-            // if (pp.x > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = pp.x;
-            // if (pp.y > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = pp.y;
-
-            const BoostPolygonSet& pShape = rotatedPartsCache.at(pp.originalPartId)[static_cast<int>(pp.rotation / 90.0)];
+        for (const auto& pp : ind.cachedSolution.placedParts) {
+            const auto& pShape = rotatedPartsCache.at(pp.originalPartId)[static_cast<int>(pp.rotation / 90.0)];
             namespace bp = boost::polygon;
             bp::rectangle_data<int> r;
             bp::extents(r, pShape);
 
-            double partRightX = pp.x + (static_cast<double>(bp::xh(r) - bp::xl(r)) / NFPCalculator::NFP_SCALE);
-            double partTopY = pp.y + (static_cast<double>(bp::yh(r) - bp::yl(r)) / NFPCalculator::NFP_SCALE);
+            double w = static_cast<double>(bp::xh(r) - bp::xl(r)) / NFPCalculator::NFP_SCALE;
+            double h = static_cast<double>(bp::yh(r) - bp::yl(r)) / NFPCalculator::NFP_SCALE;
 
-            if (partRightX > sheetMaxX[pp.sheetId]) sheetMaxX[pp.sheetId] = partRightX;
-            if (partTopY > sheetMaxY[pp.sheetId]) sheetMaxY[pp.sheetId] = partTopY;
+            double partRightX = pp.x + w;
+            double partTopY = pp.y + h;
+
+            // Гравитационный штраф: центр детали
+            double centerX = pp.x + (w / 2.0);
+            double centerY = pp.y + (h / 2.0);
+            centerOfMassPenalty += (std::pow(centerX, 2) + std::pow(centerY, 2));
+
+            sheetMaxX[pp.sheetId] = std::max(sheetMaxX[pp.sheetId], partRightX);
+            sheetMaxY[pp.sheetId] = std::max(sheetMaxY[pp.sheetId], partTopY);
         }
 
-        for (const auto& pair : sheetMaxX) {
-            int sId = pair.first;
-            boundingBoxPenalty += (sheetMaxX[sId] * sheetMaxY[sId]);
+        double boundingBoxPenalty = 0.0;
+        for (const auto& [sId, maxX] : sheetMaxX) {
+            boundingBoxPenalty += (maxX * sheetMaxY[sId]);
         }
-        fitness += boundingBoxPenalty;
 
-        size_t placedCount = population[i].cachedSolution.placedParts.size();
-        size_t expectedCount = population[i].partIndices.size();
+        fitness += boundingBoxPenalty + (centerOfMassPenalty * 1e-4);
+
+        size_t placedCount = ind.cachedSolution.placedParts.size();
+        size_t expectedCount = ind.partIndices.size();
 
         if (placedCount < expectedCount) {
             fitness += static_cast<double>(expectedCount - placedCount) * 1e9;
         }
 
-        if (util < 1e-5) fitness += 1e9;
+        if (ind.cachedSolution.utilization < 1e-5) fitness += 1e9;
 
-        population[i].fitness = fitness;
+        ind.fitness = fitness;
     }
 }
 
@@ -465,7 +487,7 @@ std::pair<Individual, Individual> GeneticOptimizer::crossover(const Individual& 
  * 1. Swap: Менят местами две соседние детали в очереди.
  * 2. Rotate: Меняет вращение детали на случайное.
  */
-void GeneticOptimizer::mutate(Individual& ind) {
+void GeneticOptimizer::mutate(Individual& ind, int allowedRotations) {
     std::uniform_real_distribution<double> dist(0.0, 1.0);
     double rate = 0.05;
 
@@ -477,7 +499,7 @@ void GeneticOptimizer::mutate(Individual& ind) {
             std::swap(ind.rotations[i], ind.rotations[j]);
         }
         if(dist(m_rng) < rate) {
-            ind.rotations[i] = std::uniform_int_distribution<int>(0, 3)(m_rng);
+            ind.rotations[i] = std::uniform_int_distribution<int>(0, std::max(0, allowedRotations - 1))(m_rng);
         }
     }
 }
@@ -558,6 +580,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     }
 
     double offsetAmount = (params.partSpacing + params.cutThickness) / 2.0;
+    double angleStep = 360.0 / std::max(1, params.allowedRotations);
 
     for (size_t i = 0; i < ind.partIndices.size(); ++i) {
         int partIdx = ind.partIndices[i];
@@ -594,7 +617,7 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     PlacedPart pp;
                     pp.originalPartId = originalPart.id;
                     pp.sheetId = sheet.id;
-                    pp.rotation = rotIdx * 90.0;
+                    pp.rotation = rotIdx * angleStep;
                     pp.x = offsetAmount;
                     pp.y = offsetAmount;
                     solution.placedParts.push_back(pp);

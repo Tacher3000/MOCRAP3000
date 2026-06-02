@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QCheckBox>
+#include <QSpinBox>
 #include "../core/layoutstructures.h"
 
 class ParametersWidget : public QDialog {
@@ -24,6 +25,7 @@ private:
     QLineEdit *partSpacing;
     QLineEdit *cutThickness;
     QCheckBox *showRemnantsCheck;
+    QSpinBox *rotationsSpin;
 
     QVBoxLayout *layout;
 };

@@ -67,13 +67,19 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
     };
 
     double coarseGridStep = std::max(1.0, params.partSpacing);
+    int rotCount = std::max(1, params.allowedRotations);
+    double angleStep = 360.0 / rotCount;
+    std::vector<double> dynamicRotations(rotCount);
+    for (int i = 0; i < rotCount; ++i) {
+        dynamicRotations[i] = i * angleStep;
+    }
 
     for (const auto& part : partsToNest) {
         bool placed = false;
 
         for (auto& sheet : sheets) {
             if (placePartOnSheet(sheet.occupied, part, currentSheetWidth, currentSheetHeight,
-                                 solution, sheet.id, coarseGridStep)) {
+                                 solution, sheet.id, coarseGridStep, dynamicRotations)) {
                 placed = true;
                 break;
             }
@@ -82,7 +88,7 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
         if (!placed) {
             auto& newSheet = addSheet();
             if (!placePartOnSheet(newSheet.occupied, part, currentSheetWidth, currentSheetHeight,
-                                  solution, newSheet.id, coarseGridStep)) {
+                                  solution, newSheet.id, coarseGridStep, dynamicRotations)) {
                 qWarning() << "Part ID" << part.id << "does not fit on the sheet!";
             }
         }
@@ -102,9 +108,9 @@ NestingSolution LayoutOptimizer::optimize(const Geometry& rawGeometry, const Nes
 bool LayoutOptimizer::placePartOnSheet(QPainterPath& occupied, const OptimizablePart& part,
                                        double sheetW, double sheetH,
                                        NestingSolution& solution, int sheetId,
-                                       double gridStep)
+                                       double gridStep,
+                                       const std::vector<double>& rotations)
 {
-    const std::vector<double> rotations = {0.0, 90.0, 180.0, 270.0};
 
     struct Position {
         double x, y, rot;

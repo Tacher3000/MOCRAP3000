@@ -17,6 +17,7 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
     QString savedSpacing = settings.value("nesting/partSpacing", "5.0").toString();
     QString savedThickness = settings.value("nesting/cutThickness", "2.0").toString();
     bool savedShowRemnants = settings.value("nesting/showRemnants", true).toBool();
+    int savedRotations = settings.value("nesting/allowedRotations", 4).toInt();
 
     QGroupBox *spacingGroup = new QGroupBox(tr("Отступы (мм)"), this);
     QHBoxLayout *spacingLayout = new QHBoxLayout(spacingGroup);
@@ -35,6 +36,12 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
     showRemnantsCheck = new QCheckBox(tr("Визуализировать полезные остатки"), this);
     showRemnantsCheck->setChecked(savedShowRemnants);
     layout->addWidget(showRemnantsCheck);
+
+    spacingLayout->addWidget(new QLabel(tr("Кол-во поворотов:")));
+    rotationsSpin = new QSpinBox(this);
+    rotationsSpin->setRange(1, 360);
+    rotationsSpin->setValue(savedRotations);
+    spacingLayout->addWidget(rotationsSpin);
 
     QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
@@ -55,6 +62,7 @@ void ParametersWidget::accept() {
     settings.setValue("nesting/partSpacing", partSpacing->text());
     settings.setValue("nesting/cutThickness", cutThickness->text());
     settings.setValue("nesting/showRemnants", showRemnantsCheck->isChecked());
+    settings.setValue("nesting/allowedRotations", rotationsSpin->value());
 
     QDialog::accept();
 }
@@ -65,6 +73,7 @@ NestingParameters ParametersWidget::getNestingParameters() const {
     params.partSpacing = partSpacing->text().replace(',', '.').toDouble();
     params.cutThickness = cutThickness->text().replace(',', '.').toDouble();
     params.showRemnants = showRemnantsCheck->isChecked();
+    params.allowedRotations = rotationsSpin->value();
 
     return params;
 }

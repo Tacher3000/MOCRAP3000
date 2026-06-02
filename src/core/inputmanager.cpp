@@ -3,6 +3,7 @@
 #include "geometrynormalizer.h"
 #include <stdexcept>
 #include <vector>
+#include <filesystem>
 
 Geometry InputManager::loadDxf(const std::string& filePath) {
     DxfReader reader;
@@ -13,7 +14,10 @@ Geometry InputManager::loadDxf(const std::string& filePath) {
         throw std::runtime_error("DXF file contains no recognizable parts.");
     }
 
+    std::string baseFilename = std::filesystem::path(filePath).stem().string();
+
     std::vector<Part> validParts;
+    int filePartCounter = 1;
 
     for (auto& part : rawGeometry.parts) {
         part.polygon = geometry::normalizePart(part);
@@ -25,9 +29,12 @@ Geometry InputManager::loadDxf(const std::string& filePath) {
             if (width > 1e-5 || height > 1e-5) {
                 part.id = ++m_globalPartId;
 
-
                 if (part.name.find("Part_") == 0) {
-                    part.name = "Part_" + std::to_string(part.id);
+                    if (rawGeometry.parts.size() == 1) {
+                        part.name = baseFilename;
+                    } else {
+                        part.name = baseFilename + "_" + std::to_string(filePartCounter++);
+                    }
                 }
 
                 validParts.push_back(part);

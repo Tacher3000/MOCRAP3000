@@ -23,7 +23,8 @@ private:
                           double sheetW, double sheetH,
                           NestingSolution& solution,
                           int sheetId,
-                          double gridStep);
+                          double gridStep,
+                          const std::vector<double>& rotations);
 };
 
 #endif // LAYOUTOPTIMIZER_H

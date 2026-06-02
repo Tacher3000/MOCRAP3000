@@ -19,6 +19,7 @@ struct NestingParameters {
     double partSpacing = 0.0;
     double cutThickness = 0.0;
     bool showRemnants = true;
+    int allowedRotations = 4;
 
     static NestingParameters fromStrings(
         const std::string& spacingStr,

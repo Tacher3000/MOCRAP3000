@@ -41,7 +41,7 @@ public:
                              std::function<void(const NestingSolution&)> progressCallback = nullptr);
 
 private:
-    void initializePopulation(const std::vector<Part>& parts, int popSize);
+    void initializePopulation(const std::vector<Part>& parts, int popSize, int allowedRotations);
 
     void evaluatePopulation(std::vector<Individual>& population,
                             const std::vector<Part>& parts,
@@ -52,7 +52,7 @@ private:
 
     Individual selection(const std::vector<Individual>& population);
     std::pair<Individual, Individual> crossover(const Individual& p1, const Individual& p2);
-    void mutate(Individual& ind);
+    void mutate(Individual& ind, int allowedRotations);
 
     NestingSolution decode(const Individual& ind,
                            const std::vector<Part>& parts,
@@ -60,7 +60,7 @@ private:
                            const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
                            const NFPCacheType& nfpCache);
 
-    BoostPolygonSet rotatePolySet(const BoostPolygonSet& set, int angle);
+    BoostPolygonSet rotatePolySet(const BoostPolygonSet& set, double angleDeg);
     void normalizePolySet(BoostPolygonSet& set);
 
     std::vector<Individual> m_population;
