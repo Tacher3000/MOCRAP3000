@@ -2,8 +2,10 @@
 #define GEOMETRYUTILS_H
 
 #include "geometry.h"
+#include "layoutstructures.h"
 #include <QPainterPath>
 #include <QPolygonF>
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -28,6 +30,12 @@ QPainterPath partToPath(const Part& part);
  * Используется для учета spacing и cutThickness.
  */
 QPainterPath expandPath(const QPainterPath& path, double offset);
+
+/**
+     * @brief Извлекает полезные остатки (Remnants) из готового решения.
+     * Возвращает вектор полигонов, которые можно передать как новые customShape листы.
+     */
+std::vector<Part> extractRemnants(const NestingSolution& solution, double cutThickness = 0.0, double minRemnantArea = 10000.0);
 
 }
 

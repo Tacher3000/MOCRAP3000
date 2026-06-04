@@ -32,6 +32,7 @@ public:
     };
 
     using NFPCacheType = std::map<std::tuple<int, int, int, int>, Clipper2Lib::Paths64>;
+    using InnerNFPCacheType = std::map<std::tuple<int, int, int>, Clipper2Lib::Paths64>;
 
     GeneticOptimizer();
 
@@ -48,6 +49,7 @@ private:
                             const NestingParameters& params,
                             const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
                             const NFPCacheType& nfpCache,
+                            const InnerNFPCacheType& innerNfpCache,
                             const std::atomic<bool>& stopFlag);
 
     Individual selection(const std::vector<Individual>& population);
@@ -58,7 +60,8 @@ private:
                            const std::vector<Part>& parts,
                            const NestingParameters& params,
                            const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                           const NFPCacheType& nfpCache);
+                           const NFPCacheType& nfpCache,
+                           const InnerNFPCacheType& innerNfpCache);
 
     BoostPolygonSet rotatePolySet(const BoostPolygonSet& set, double angleDeg);
     void normalizePolySet(BoostPolygonSet& set);

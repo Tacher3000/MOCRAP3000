@@ -29,7 +29,7 @@ SheetListWidget::SheetListWidget(QWidget *parent) : QWidget(parent) {
     checkInfinite = new QCheckBox(tr("Беск."));
     connect(checkInfinite, &QCheckBox::toggled, spinQty, &QSpinBox::setDisabled);
 
-    QPushButton *btnAdd = new QPushButton(tr("+"));
+    QPushButton *btnAdd = new QPushButton(tr("+ Прямоугольный"));
     btnAdd->setFixedWidth(30);
     connect(btnAdd, &QPushButton::clicked, this, &SheetListWidget::addSheet);
 
@@ -41,6 +41,10 @@ SheetListWidget::SheetListWidget(QWidget *parent) : QWidget(parent) {
     inputLayout->addWidget(btnAdd);
 
     mainLayout->addLayout(inputLayout);
+
+    QPushButton *btnLoadCustom = new QPushButton(tr("Загрузить фигурный лист (DXF)"));
+    connect(btnLoadCustom, &QPushButton::clicked, this, &SheetListWidget::requestLoadCustomSheet);
+    mainLayout->addWidget(btnLoadCustom);
 
     listLayout = new QVBoxLayout();
     mainLayout->addLayout(listLayout);
@@ -61,6 +65,44 @@ void SheetListWidget::addSheet() {
 
     QString text = QString("%1 x %2 мм, %3")
                        .arg(req.width).arg(req.height)
+                       .arg(req.isInfinite ? tr("Беск.") : QString::number(req.quantity) + tr(" шт."));
+
+    rowLayout->addWidget(new QLabel(text));
+
+    QPushButton *btnRemove = new QPushButton("X");
+    btnRemove->setFixedWidth(30);
+    rowLayout->addWidget(btnRemove);
+
+    connect(btnRemove, &QPushButton::clicked, [this, rowWidget]() {
+        for (auto it = m_sheets.begin(); it != m_sheets.end(); ++it) {
+            if (it->widget == rowWidget) {
+                m_sheets.erase(it);
+                break;
+            }
+        }
+        rowWidget->deleteLater();
+    });
+
+    m_sheets.push_back({req, rowWidget});
+    listLayout->addWidget(rowWidget);
+}
+
+void SheetListWidget::addCustomSheet(const Part& part) {
+    SheetRequest req;
+    req.id = m_sheetIdCounter++;
+    req.width = 0;
+    req.height = 0;
+    req.quantity = spinQty->value();
+    req.isInfinite = checkInfinite->isChecked();
+    req.isCustomShape = true;
+    req.customShape = part;
+
+    QWidget *rowWidget = new QWidget(this);
+    QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
+    rowLayout->setContentsMargins(0, 2, 0, 2);
+
+    QString text = QString("Остаток: %1, %2")
+                       .arg(QString::fromStdString(part.name))
                        .arg(req.isInfinite ? tr("Беск.") : QString::number(req.quantity) + tr(" шт."));
 
     rowLayout->addWidget(new QLabel(text));

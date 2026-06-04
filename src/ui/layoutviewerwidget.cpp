@@ -16,6 +16,7 @@ LayoutViewerWidget::LayoutViewerWidget(QWidget *parent) : QWidget(parent) {
 
     view = new CustomGraphicsView(this);
     view->setScene(new QGraphicsScene(this));
+    view->setTransform(QTransform::fromScale(1, -1));
     layout->addWidget(view);
 
     QHBoxLayout *sliderLayout = new QHBoxLayout();

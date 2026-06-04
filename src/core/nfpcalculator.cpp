@@ -108,7 +108,6 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace boost::polygon;
 
-    // 1. Отражение B (Negate B) - NFP(A, B) = Minkowski(A, -B)
     BoostPolygonSet B_negated;
     std::vector<BoostPolygonWithHoles> b_polys;
     B.get(b_polys);
@@ -123,240 +122,97 @@ BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const
         B_negated.insert(negPoly);
     }
 
-    // 2. Конвертация в Clipper2
-    Paths64 sub = toClipper(A);
-    Paths64 pat = toClipper(B_negated);
-
-    if (sub.empty() || pat.empty()) return BoostPolygonSet();
-
-    Paths64 solution;
-
-    // 3. Честная сумма Минковского (обводка контура по контуру)
-    for (const auto& pathA : sub) {
-        for (const auto& pathB : pat) {
-            Paths64 tmp = MinkowskiSum(pathB, pathA, true);
-            solution.insert(solution.end(), tmp.begin(), tmp.end());
-        }
-    }
-
-    solution.insert(solution.end(), sub.begin(), sub.end());
-
-    // 4. Объединение с правилом NonZero гарантированно заливает внутренности
-    // и уничтожает ложные дырки (false holes) от вогнутостей.
-    Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
-
-    // 5. Конвертация обратно в Boost
-    return fromClipper(unifiedSolution);
+    BoostPolygonSet result;
+    convolveTwoPolygonSets(result, A, B_negated);
+    return result;
 }
 
-/**
- * @brief Вычисляет Outer NFP (Зону коллизии).
- * Реализация через Clipper2 MinkowskiSum.
- */
-// BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
-//     using namespace boost::polygon;
-
-//     // qDebug() << "  [NFP] Start Calculate Outer NFP...";
-//     // QTime timer; timer.start();
-
-//     // 1. Отражение B (Negate B) - как и раньше, NFP(A, B) = Minkowski(A, -B)
-//     BoostPolygonSet B_negated;
-//     std::vector<BoostPolygon> b_polys;
-//     B.get(b_polys);
-
-//     for (auto& poly : b_polys) {
-//         std::vector<BoostPoint> pts;
-//         for (auto it = begin_points(poly); it != end_points(poly); ++it) {
-//             pts.push_back(BoostPoint(-it->x(), -it->y()));
-//         }
-//         BoostPolygon negPoly;
-//         set_points(negPoly, pts.begin(), pts.end());
-//         B_negated.insert(negPoly);
-//     }
-
-//     // 2. Конвертация в Clipper2
-//     Paths64 sub = toClipper(A);         // Препятствие (Subject)
-//     Paths64 pat = toClipper(B_negated); // Деталь (Pattern)
-
-//     if (sub.empty() || pat.empty()) return BoostPolygonSet();
-
-//     Paths64 solution;
-
-//     // Clipper2 MinkowskiSum принимает Pattern и Path.
-//     // Нам нужно просуммировать каждый контур A с каждым контуром B.
-//     // Обычно MinkowskiSum работает "Pattern (замкнутый) + Path (открытый или замкнутый)".
-//     // Здесь мы используем перегрузку: MinkowskiSum(Pattern, Path, isClosed)
-
-//     for (const auto& pathA : sub) {
-//         for (const auto& pathB : pat) {
-//             Paths64 tmp = MinkowskiSum(pathB, pathA, true);
-//             solution.insert(solution.end(), tmp.begin(), tmp.end());
-//         }
-//     }
-
-//     // 4. Объединение (Union) результата, чтобы убрать самопересечения
-//     Paths64 unifiedSolution = Union(solution, FillRule::NonZero);
-
-//     // 5. Конвертация обратно в Boost
-//     BoostPolygonSet result = fromClipper(unifiedSolution);
-
-//     // if (timer.elapsed() > 100) {
-//     //    qDebug() << "  [NFP] Slow NFP calc:" << timer.elapsed() << "ms. Result polys:" << unifiedSolution.size();
-//     // }
-
-//     return result;
-// }
-
-/**
- * @brief Вычисляет Inner NFP (Зону допустимого размещения внутри листа).
- * * @details
- * Использует метод вычитания "Универсума" (Universe Subtraction).
- * Напрямую вычислить Minkowski Difference (A - B) для полигонов сложно.
- * Проще найти зону, где деталь ВЫЛЕЗАЕТ за лист, и вычесть её из всего пространства.
- * * Формула:
- * $InnerNFP = Universe \setminus ( (Universe \setminus Sheet) \oplus (-Part) )$
- * Где:
- * - $Universe$ — огромное ограничивающее пространство.
- * - $Universe \setminus Sheet$ — инверсия листа (дырка в форме листа).
- * - $\oplus (-Part)$ — "раздуваем" границы этой дырки на размер детали.
- * * В GeneticOptimizer для простых прямоугольных листов используется упрощенная логика (просто уменьшение rect),
- * но этот метод нужен для листов сложной формы (с вырезами).
- */
-// BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, const BoostPolygonSet& Part) {
-//     using namespace boost::polygon;
-
-//     // 1. Отражаем деталь (так как sliding window требует инверсии для свертки)
-//     BoostPolygonSet Part_negated;
-//     std::vector<BoostPolygon> b_polys;
-//     Part.get(b_polys);
-//     for (auto& poly : b_polys) {
-//         std::vector<BoostPoint> pts;
-//         for (auto it = begin_points(poly); it != end_points(poly); ++it) {
-//             pts.push_back(BoostPoint(-it->x(), -it->y()));
-//         }
-//         BoostPolygon negPoly;
-//         set_points(negPoly, pts.begin(), pts.end());
-//         Part_negated.insert(negPoly);
-//     }
-
-//     // 2. Определяем Универсум
-//     rectangle_data<long long> boundsA, boundsB;
-//     extents(boundsA, Sheet);
-//     extents(boundsB, Part);
-
-//     // Огромный отступ, гарантирующий перекрытие
-//     long long widthA = xh(boundsA) - xl(boundsA);
-//     long long heightA = yh(boundsA) - yl(boundsA);
-//     long long margin = std::max({widthA, heightA}) * 10;
-
-//     rectangle_data<long long> universeRect = boundsA;
-//     bloat(universeRect, margin); // Расширяем границы
-
-//     BoostPolygonSet universe;
-//     universe.insert(universeRect);
-
-//     // 3. Инверсия листа (Inverse Sheet)
-//     BoostPolygonSet Sheet_Inverse = universe - Sheet;
-
-//     // 4. "Раздуваем" инверсию (зону "не-листа") на размер детали
-//     // NoFitZone — это зона, где центр детали находится "слишком близко" к границе листа или снаружи.
-//     BoostPolygonSet NoFitZone;
-//     convolveTwoPolygonSets(NoFitZone, Sheet_Inverse, Part_negated);
-
-//     // 5. Допустимая зона = Универсум - Запретная зона
-//     BoostPolygonSet InnerFit = universe - NoFitZone;
-
-//     return InnerFit;
-// }
 
 BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, const BoostPolygonSet& Part) {
-    using namespace boost::polygon;
+    using namespace Clipper2Lib;
 
-    // qDebug() << "  [NFP] Calculate Inner NFP...";
     BoostPolygonSet Part_negated;
-    std::vector<BoostPolygon> b_polys;
-    Part.get(b_polys);
-    for (auto& poly : b_polys) {
+    std::vector<BoostPolygonWithHoles> p_polys;
+    Part.get(p_polys);
+    for (const auto& poly : p_polys) {
         std::vector<BoostPoint> pts;
-        for (auto it = begin_points(poly); it != end_points(poly); ++it) {
+        for (auto it = boost::polygon::begin_points(poly); it != boost::polygon::end_points(poly); ++it) {
             pts.push_back(BoostPoint(-it->x(), -it->y()));
         }
         BoostPolygon negPoly;
-        set_points(negPoly, pts.begin(), pts.end());
+        boost::polygon::set_points(negPoly, pts.begin(), pts.end());
         Part_negated.insert(negPoly);
     }
 
-    rectangle_data<int> boundsA;
-    extents(boundsA, Sheet);
+    Paths64 sheetPaths = toClipper(Sheet);
+    Paths64 partNegPaths = toClipper(Part_negated);
 
-    int width = xh(boundsA) - xl(boundsA);
-    int height = yh(boundsA) - yl(boundsA);
-    int margin = std::max(width, height) * 10;
-    if (margin == 0) margin = 1000000;
+    if (sheetPaths.empty() || partNegPaths.empty()) {
+        return BoostPolygonSet();
+    }
 
-    rectangle_data<int> universeRect = boundsA;
-    bloat(universeRect, margin);
+    Paths64 collisionZone;
+    for (const auto& sPath : sheetPaths) {
+        for (const auto& pPath : partNegPaths) {
+            Paths64 swept = MinkowskiSum(pPath, sPath, true);
+            collisionZone.insert(collisionZone.end(), swept.begin(), swept.end());
+        }
+    }
 
-    BoostPolygonSet universe;
-    universe.insert(universeRect);
+    collisionZone = Union(collisionZone, FillRule::NonZero);
 
-    BoostPolygonSet Sheet_Inverse = universe - Sheet;
+    Rect64 sheetBounds = GetBounds(sheetPaths);
+    Rect64 partBounds = GetBounds(partNegPaths);
+    int64_t margin = std::max({sheetBounds.Width(), sheetBounds.Height(), partBounds.Width(), partBounds.Height()}) * 2;
+    if (margin < 1000) margin = 10000;
 
-    // Раздуваем инверсию листа на размер детали (Minkowski Sum)
-    // NoFitZone = Minkowski(Sheet_Inverse, Part)
-    // (см. пояснение в предыдущем ответе: calculateOuterNFP делает Negate внутри,
-    // а нам нужно A + (-B), где B = Part_negated.
-    // Чтобы получить A + Part_negated, мы передаем в функцию A и Part_original.
-    // Функция сделает A + (-Part_original) = A + Part_negated. Все верно.)
+    Path64 universePath = {
+        Point64(sheetBounds.left - margin, sheetBounds.top - margin),
+        Point64(sheetBounds.right + margin, sheetBounds.top - margin),
+        Point64(sheetBounds.right + margin, sheetBounds.bottom + margin),
+        Point64(sheetBounds.left - margin, sheetBounds.bottom + margin)
+    };
 
-    BoostPolygonSet NoFitZone = calculateOuterNFP(Sheet_Inverse, Part);
+    Paths64 candidates = Difference({universePath}, collisionZone, FillRule::NonZero);
+    Paths64 validInnerNfp;
 
-    BoostPolygonSet InnerFit = universe - NoFitZone;
+    for (const auto& cand : candidates) {
+        if (cand.empty()) continue;
 
-    return InnerFit;
+        bool touchesUniverse = false;
+        for (const auto& pt : cand) {
+            if (pt.x <= sheetBounds.left - margin + 100 || pt.x >= sheetBounds.right + margin - 100 ||
+                pt.y <= sheetBounds.top - margin + 100 || pt.y >= sheetBounds.bottom + margin - 100) {
+                touchesUniverse = true;
+                break;
+            }
+        }
+        if (touchesUniverse) continue;
+
+        Point64 testPt = cand[0];
+        Paths64 shiftedPart;
+        for (const auto& pPath : partNegPaths) {
+            Path64 sp;
+            for (const auto& pt : pPath) {
+                sp.push_back(Point64(-pt.x + testPt.x, -pt.y + testPt.y));
+            }
+            shiftedPart.push_back(sp);
+        }
+
+        Paths64 out = Difference(shiftedPart, sheetPaths, FillRule::NonZero);
+
+        double errorArea = 0.0;
+        for (const auto& oPath : out) {
+            errorArea += std::abs(Area(oPath));
+        }
+
+        if (errorArea < 1000.0) {
+            validInnerNfp.push_back(cand);
+        }
+    }
+
+    return fromClipper(validInnerNfp);
 }
-
-// --- Clipper2 Conversion Helpers ---
-
-/**
- * @brief Конвертация из BoostPolygonSet в Clipper2 Paths64.
- * * @details
- * Boost Polygon использует замкнутые контуры (первая точка == последняя).
- * Clipper2 предпочитает незамкнутые массивы точек (замыкание подразумевается).
- * Метод удаляет последнюю точку, если она дублирует первую.
- */
-// Clipper2Lib::Paths64 NFPCalculator::toClipper(const BoostPolygonSet& set) {
-//     namespace bp = boost::polygon;
-//     Clipper2Lib::Paths64 paths;
-//     std::vector<BoostPolygonWithHoles> polys;
-//     set.get(polys);
-
-//     for (const auto& poly : polys) {
-//         // Внешний контур
-//         Clipper2Lib::Path64 path;
-//         for (auto it = bp::begin_points(poly); it != bp::end_points(poly); ++it) {
-//             path.push_back(Clipper2Lib::Point64(it->x(), it->y()));
-//         }
-//         // Удаляем дубликат замыкания
-//         if (path.size() > 0 && path.front() == path.back()) {
-//             path.pop_back();
-//         }
-//         paths.push_back(path);
-
-//         // Внутренние отверстия
-//         for (auto itHole = bp::begin_holes(poly); itHole != bp::end_holes(poly); ++itHole) {
-//             Clipper2Lib::Path64 holePath;
-//             for (auto it = bp::begin_points(*itHole); it != bp::end_points(*itHole); ++it) {
-//                 holePath.push_back(Clipper2Lib::Point64(it->x(), it->y()));
-//             }
-//             if (holePath.size() > 0 && holePath.front() == holePath.back()) {
-//                 holePath.pop_back();
-//             }
-//             paths.push_back(holePath);
-//         }
-//     }
-//     return paths;
-// }
 
 Clipper2Lib::Paths64 NFPCalculator::toClipper(const BoostPolygonSet& set) {
     namespace bp = boost::polygon;
@@ -383,31 +239,6 @@ Clipper2Lib::Paths64 NFPCalculator::toClipper(const BoostPolygonSet& set) {
     }
     return paths;
 }
-
-/**
- * @brief Конвертация из Clipper2 Paths64 в BoostPolygonSet.
- * * @details
- * Восстанавливает замыкание полигонов (добавляет точку в конец),
- * так как Boost Polygon требует явного замыкания.
- */
-// BoostPolygonSet NFPCalculator::fromClipper(const Clipper2Lib::Paths64& paths) {
-//     BoostPolygonSet set;
-//     for (const auto& path : paths) {
-//         std::vector<BoostPoint> pts;
-//         for (const auto& p : path) {
-//             pts.push_back(BoostPoint(p.x, p.y));
-//         }
-//         // Boost ожидает замкнутые полигоны
-//         if (!pts.empty() && pts.front() != pts.back()) {
-//             pts.push_back(pts.front());
-//         }
-
-//         BoostPolygon poly;
-//         boost::polygon::set_points(poly, pts.begin(), pts.end());
-//         set.insert(poly);
-//     }
-//     return set;
-// }
 
 BoostPolygonSet NFPCalculator::fromClipper(const Clipper2Lib::Paths64& paths) {
     BoostPolygonSet posSet;

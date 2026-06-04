@@ -14,6 +14,10 @@ class SheetListWidget : public QWidget {
 public:
     explicit SheetListWidget(QWidget *parent = nullptr);
     std::vector<SheetRequest> getSheets() const;
+    void addCustomSheet(const Part& part);
+
+signals:
+    void requestLoadCustomSheet();
 
 private slots:
     void addSheet();
@@ -30,6 +34,7 @@ private:
         QWidget* widget;
     };
     std::vector<SheetEntry> m_sheets;
+    int m_sheetIdCounter = 1;
 };
 
 #endif // SHEETLISTWIDGET_H

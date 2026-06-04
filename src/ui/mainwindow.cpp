@@ -61,8 +61,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(partList, &PartListWidget::partSelected, this, &MainWindow::onPartSelected);
     connect(partList, &PartListWidget::showAllPartsRequested, this, &MainWindow::onShowAllPartsRequested);
 
-    SheetListWidget* sheetList = new SheetListWidget(this);
+    sheetList = new SheetListWidget(this);
     leftLayout->addWidget(sheetList);
+    connect(sheetList, &SheetListWidget::requestLoadCustomSheet, this, &MainWindow::loadCustomSheet);
 
     btnStartOptimization = new QPushButton(tr("Запустить оптимизацию"), this);
     btnStartOptimization->setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #4CAF50; color: white; border-radius: 4px;");
@@ -224,10 +225,7 @@ void MainWindow::startOptimization() {
 
     NestingParameters params = parametersDialog->getNestingParameters();
 
-    SheetListWidget* sheetList = this->findChild<SheetListWidget*>();
-    if (sheetList) {
-        params.sheets = sheetList->getSheets();
-    }
+    params.sheets = sheetList->getSheets();
 
     if (params.sheets.empty()) {
         QMessageBox::warning(this, tr("Ошибка"), tr("Добавьте хотя бы один лист для раскроя!"));
@@ -235,6 +233,29 @@ void MainWindow::startOptimization() {
     }
 
     emit startOptimizationRequested(activeGeometry, params);
+}
+
+void MainWindow::loadCustomSheet() {
+    QStringList fileNames = QFileDialog::getOpenFileNames(this, tr("Открыть DXF файл остатка"), QString(), tr("DXF Files (*.dxf)"));
+    if (fileNames.isEmpty()) return;
+
+    int successCount = 0;
+
+    for (const QString& fileName : fileNames) {
+        try {
+            Geometry loadedGeometry = inputManager.loadDxf(fileName.toStdString());
+            for (const auto& part : loadedGeometry.parts) {
+                sheetList->addCustomSheet(part);
+                successCount++;
+            }
+        } catch (const std::exception& e) {
+            QMessageBox::critical(this, tr("Ошибка загрузки"), tr("Не удалось загрузить DXF лист: %1\n%2").arg(fileName).arg(QString::fromStdString(e.what())));
+        }
+    }
+
+    if (successCount > 0) {
+        statusLabel->setText(tr("Добавлены фигурные листы. Загружено контуров: %1").arg(successCount));
+    }
 }
 
 void MainWindow::stopOptimization() {

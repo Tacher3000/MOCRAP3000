@@ -12,6 +12,7 @@ class ParametersWidget;
 class ViewerWidget;
 class LayoutViewerWidget;
 class PartListWidget;
+class SheetListWidget;
 class QSplitter;
 class QLabel;
 class QProgressBar;
@@ -29,6 +30,7 @@ protected:
 
 private slots:
     void loadFile();
+    void loadCustomSheet();
     void clearAll();
     void saveFile();
     void saveAsFile();
@@ -45,8 +47,6 @@ private slots:
     void onOptimizationError(const QString &message);
     void onOptimizationProgress(const NestingSolution &solution);
 
-
-
 signals:
     void startOptimizationRequested(const Geometry geometry, const NestingParameters params);
     void stopOptimizationRequested();
@@ -57,6 +57,7 @@ private:
 
     ParametersWidget *parametersDialog;
     PartListWidget *partList;
+    SheetListWidget *sheetList;
     QPushButton *btnStartOptimization;
     QPushButton *btnStopOptimization;
 

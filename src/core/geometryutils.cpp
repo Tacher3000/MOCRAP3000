@@ -1,53 +1,13 @@
 #include "geometryutils.h"
+#include "nfpcalculator.h"
+#include "geometryadapter.h"
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <QTransform>
+#include <clipper2/clipper.h>
 
 namespace geometry {
-
-// Contour toContour(const LWPolyline& poly) {
-//     Contour contour;
-//     for (const auto& v : poly.vertices) {
-//         contour.points.push_back({v.x, v.y});
-//     }
-//     if ((poly.flags & 1) && !contour.points.empty()) {
-//         const auto& first = contour.points.front();
-//         const auto& last = contour.points.back();
-//         if (std::abs(first.x - last.x) > 1e-6 || std::abs(first.y - last.y) > 1e-6) {
-//             contour.points.push_back(first);
-//         }
-//     }
-//     return contour;
-// }
-
-// Polygon normalizePart(const Part& part) {
-//     Polygon polygon;
-//     if (part.lwpolylines.empty()) return polygon;
-
-//     for (const auto& poly : part.lwpolylines) {
-//         polygon.contours.push_back(toContour(poly));
-//     }
-//     if (!polygon.contours.empty()) {
-//         double minX = std::numeric_limits<double>::max();
-//         double minY = std::numeric_limits<double>::max();
-//         double maxX = std::numeric_limits<double>::lowest();
-//         double maxY = std::numeric_limits<double>::lowest();
-
-//         for (const auto& contour : polygon.contours) {
-//             for (const auto& p : contour.points) {
-//                 if (p.x < minX) minX = p.x;
-//                 if (p.x > maxX) maxX = p.x;
-//                 if (p.y < minY) minY = p.y;
-//                 if (p.y > maxY) maxY = p.y;
-//             }
-//         }
-//         polygon.minX = minX;
-//         polygon.maxX = maxX;
-//         polygon.minY = minY;
-//         polygon.maxY = maxY;
-//     }
-//     return polygon;
-// }
 
 QPolygonF toQPolygon(const Contour& contour) {
     QPolygonF poly;
@@ -86,8 +46,8 @@ QPainterPath partToPath(const Part& part) {
     }
 
     for (const auto& circle : part.circles) {
-        path.addEllipse(QPointF(circle.center.x - circle.radius, circle.center.y - circle.radius),
-                        circle.radius * 2, circle.radius * 2);
+        path.addEllipse(QPointF(circle.center.x, circle.center.y),
+                        circle.radius, circle.radius);
     }
 
     for (const auto& arc : part.arcs) {
@@ -196,6 +156,110 @@ QPainterPath expandPath(const QPainterPath& path, double offset) {
     QPainterPath result = path + stroke;
 
     return result.simplified();
+}
+
+std::vector<Part> extractRemnants(const NestingSolution& solution, double cutThickness, double minRemnantArea) {
+    using namespace Clipper2Lib;
+    std::vector<Part> remnants;
+    int remnantIdCounter = 9000;
+
+    for (const auto& sheet : solution.usedSheets) {
+        Paths64 sheetPoly;
+
+        if (sheet.isCustomShape && sheet.customShape.has_value()) {
+            BoostPolygonSet bSet = GeometryAdapter::toBoost(sheet.customShape.value());
+
+            namespace bp = boost::polygon;
+            bp::rectangle_data<int> rect;
+            if (bp::extents(rect, bSet)) {
+                int minX = bp::xl(rect);
+                int minY = bp::yl(rect);
+                if (minX != 0 || minY != 0) {
+                    std::vector<BoostPolygonWithHoles> polys;
+                    bSet.get(polys);
+                    bSet.clear();
+                    for(auto& p : polys) {
+                        bp::move(p, bp::HORIZONTAL, -minX);
+                        bp::move(p, bp::VERTICAL, -minY);
+                        bSet.insert(p);
+                    }
+                }
+            }
+            sheetPoly = NFPCalculator::toClipper(bSet);
+        } else {
+            Path64 rect;
+            rect.push_back(Point64(0LL, 0LL));
+            rect.push_back(Point64(static_cast<int64_t>(sheet.width * NFPCalculator::NFP_SCALE), 0LL));
+            rect.push_back(Point64(static_cast<int64_t>(sheet.width * NFPCalculator::NFP_SCALE), static_cast<int64_t>(sheet.height * NFPCalculator::NFP_SCALE)));
+            rect.push_back(Point64(0LL, static_cast<int64_t>(sheet.height * NFPCalculator::NFP_SCALE)));
+            sheetPoly.push_back(rect);
+        }
+
+        Paths64 placedHoles;
+
+        for (const auto& pp : solution.placedParts) {
+            if (pp.sheetId != sheet.id) continue;
+
+            const Part& originalPart = solution.partsMap.at(pp.originalPartId);
+            Path64 partPath;
+
+            double rad = pp.rotation * std::numbers::pi / 180.0;
+            double cosA = std::cos(rad);
+            double sinA = std::sin(rad);
+
+            for (const auto& line : originalPart.lines) {
+                double rx = line.start.x * cosA - line.start.y * sinA;
+                double ry = line.start.x * sinA + line.start.y * cosA;
+
+                double finalX = (rx + pp.x) * NFPCalculator::NFP_SCALE;
+                double finalY = (ry + pp.y) * NFPCalculator::NFP_SCALE;
+
+                partPath.push_back(Point64(finalX, finalY));
+            }
+
+            placedHoles.push_back(partPath);
+        }
+
+        if (cutThickness > 0.0) {
+            placedHoles = InflatePaths(placedHoles,
+                                       (cutThickness / 2.0) * NFPCalculator::NFP_SCALE,
+                                       JoinType::Miter,
+                                       EndType::Polygon);
+        }
+
+        Paths64 remnantPaths;
+        Clipper64 clipper;
+        clipper.AddSubject(sheetPoly);
+        clipper.AddClip(placedHoles);
+        clipper.Execute(ClipType::Difference, FillRule::NonZero, remnantPaths);
+
+        double scaledMinArea = minRemnantArea * (NFPCalculator::NFP_SCALE * NFPCalculator::NFP_SCALE);
+
+        for (const auto& path : remnantPaths) {
+            if (std::abs(Area(path)) > scaledMinArea) {
+                Part remPart;
+                remPart.id = remnantIdCounter++;
+                remPart.name = "Remnant_S" + std::to_string(sheet.id) + "_" + std::to_string(remPart.id);
+
+                for (size_t i = 0; i < path.size(); ++i) {
+                    const auto& pt1 = path[i];
+                    const auto& pt2 = path[(i + 1) % path.size()];
+
+                    Line l;
+                    l.start.x = static_cast<double>(pt1.x) / NFPCalculator::NFP_SCALE;
+                    l.start.y = static_cast<double>(pt1.y) / NFPCalculator::NFP_SCALE;
+                    l.end.x = static_cast<double>(pt2.x) / NFPCalculator::NFP_SCALE;
+                    l.end.y = static_cast<double>(pt2.y) / NFPCalculator::NFP_SCALE;
+
+                    remPart.lines.push_back(l);
+                }
+
+                remnants.push_back(remPart);
+            }
+        }
+    }
+
+    return remnants;
 }
 
 }

@@ -162,11 +162,41 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
     }
     qDebug() << "NFP Cache ready! Entries:" << nfpCache.size();
 
+    InnerNFPCacheType innerNfpCache;
+    std::vector<SheetRequest> customSheets;
+    std::copy_if(params.sheets.begin(), params.sheets.end(), std::back_inserter(customSheets),
+                 [](const SheetRequest& sr) { return sr.isCustomShape && sr.customShape.has_value(); });
+
+    if (!customSheets.empty()) {
+        #pragma omp parallel for schedule(dynamic)
+        for (int s = 0; s < static_cast<int>(customSheets.size()); ++s) {
+            if (stopFlag) continue;
+            const auto& sheetReq = customSheets[s];
+            BoostPolygonSet sheetPoly = GeometryAdapter::toBoost(sheetReq.customShape.value());
+            normalizePolySet(sheetPoly);
+
+            for (int i = 0; i < static_cast<int>(uniqueParts.size()); ++i) {
+                if (stopFlag) continue;
+                const Part& part = uniqueParts[i];
+                for (int r = 0; r < rotCount; ++r) {
+                    const auto& pShape = rotatedPartsCache.at(part.id)[r];
+                    BoostPolygonSet innerFit = NFPCalculator::calculateInnerNFP(sheetPoly, pShape);
+                    Paths64 innerClipper = NFPCalculator::toClipper(innerFit);
+
+                    #pragma omp critical
+                    {
+                        innerNfpCache[{sheetReq.id, part.id, r}] = innerClipper;
+                    }
+                }
+            }
+        }
+    }
+
     qDebug() << "Инициализация первичной популяции";
     initializePopulation(parts, m_config.populationSize, rotCount);
 
     // qDebug() << "Оценка первой популяции";
-    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, stopFlag);
+    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, innerNfpCache, stopFlag);
 
     Individual bestInd = m_population[0];
     if (progressCallback) progressCallback(bestInd.cachedSolution);
@@ -200,7 +230,7 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         m_population = std::move(newPop);
 
         // qDebug() << "Evaluating population...";
-        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, stopFlag);
+        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, innerNfpCache, stopFlag);
         if (stopFlag) break;
         // qDebug() << "Evaluation finished.";
 
@@ -254,19 +284,16 @@ void GeneticOptimizer::initializePopulation(const std::vector<Part>& parts, int 
     baseInd.partIndices.resize(numParts);
     baseInd.rotations.resize(numParts, 0);
 
-    // Индивид 1: Сортировка по убыванию площади
     auto areaSorted = stats;
     std::ranges::sort(areaSorted, std::greater<>{}, &PartStat::area);
     for (int i = 0; i < numParts; ++i) baseInd.partIndices[i] = areaSorted[i].id;
     m_population.push_back(baseInd);
 
-    // Индивид 2: Сортировка по убыванию максимального габарита
     auto lengthSorted = stats;
     std::ranges::sort(lengthSorted, std::greater<>{}, &PartStat::length);
     for (int i = 0; i < numParts; ++i) baseInd.partIndices[i] = lengthSorted[i].id;
     m_population.push_back(baseInd);
 
-    // Остальные особи: случайные мутации базовых
     std::uniform_int_distribution<int> rotDist(0, std::max(0, allowedRotations - 1));
     for (int i = 2; i < popSize; ++i) {
         Individual ind = m_population[0];
@@ -360,15 +387,16 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
                                           const NestingParameters& params,
                                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
                                           const NFPCacheType& nfpCache,
+                                          const InnerNFPCacheType& innerNfpCache,
                                           const std::atomic<bool>& stopFlag)
 {
-// Распараллеливаем цикл по индивидам
+    double angleStep = 360.0 / std::max(1, params.allowedRotations);
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(population.size()); ++i) {
         if (stopFlag) continue;
 
         auto& ind = population[i];
-        ind.cachedSolution = decode(ind, parts, params, rotatedPartsCache, nfpCache);
+        ind.cachedSolution = decode(ind, parts, params, rotatedPartsCache, nfpCache, innerNfpCache);
 
         double fitness = ind.cachedSolution.usedSheets.size() * 1e6;
         double centerOfMassPenalty = 0.0;
@@ -377,7 +405,8 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
         std::map<int, double> sheetMaxY;
 
         for (const auto& pp : ind.cachedSolution.placedParts) {
-            const auto& pShape = rotatedPartsCache.at(pp.originalPartId)[static_cast<int>(pp.rotation / 90.0)];
+            int rIdx = static_cast<int>(std::round(pp.rotation / angleStep));
+            const auto& pShape = rotatedPartsCache.at(pp.originalPartId)[rIdx];
             namespace bp = boost::polygon;
             bp::rectangle_data<int> r;
             bp::extents(r, pShape);
@@ -388,7 +417,6 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
             double partRightX = pp.x + w;
             double partTopY = pp.y + h;
 
-            // Гравитационный штраф: центр детали
             double centerX = pp.x + (w / 2.0);
             double centerY = pp.y + (h / 2.0);
             centerOfMassPenalty += (std::pow(centerX, 2) + std::pow(centerY, 2));
@@ -537,21 +565,27 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                                          const std::vector<Part>& parts,
                                          const NestingParameters& params,
                                          const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                                         const NFPCacheType& nfpCache)
+                                         const NFPCacheType& nfpCache,
+                                         const InnerNFPCacheType& innerNfpCache)
 {
     // qDebug() << "  [Decode] Start decoding individual with" << ind.partIndices.size() << "parts.";
 
+    constexpr double epsilon = 1e-5;
+    constexpr double contactDilation = 50.0 * NFPCalculator::NFP_SCALE;
     NestingSolution solution;
 
     // --- 1. СКЛАД ЛИСТОВ ---
     struct AvailableSheet {
+        int reqId;
         double width, height;
         int remaining;
         bool isInfinite;
+        bool isCustomShape;
+        std::optional<Part> customShape;
     };
     std::vector<AvailableSheet> availSheets;
     for(const auto& sr : params.sheets) {
-        availSheets.push_back({sr.width, sr.height, sr.quantity, sr.isInfinite});
+        availSheets.push_back({sr.id, sr.width, sr.height, sr.quantity, sr.isInfinite, sr.isCustomShape, sr.customShape});
     }
 
     auto getNextSheet = [&]() -> AvailableSheet* {
@@ -566,15 +600,19 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     };
 
     struct SheetCtx {
-        int id; std::vector<PlacedItem> placedItems;
+        int id;
+        int reqId;
+        std::vector<PlacedItem> placedItems;
         double width, height;
+        bool isCustomShape;
+        std::optional<Part> customShape;
     };
 
     std::vector<SheetCtx> sheets;
     AvailableSheet* firstS = getNextSheet();
     if (firstS) {
         if (!firstS->isInfinite) firstS->remaining--;
-        sheets.push_back({1, {}, firstS->width, firstS->height});
+        sheets.push_back({1, firstS->reqId, {}, firstS->width, firstS->height, firstS->isCustomShape, firstS->customShape});
     } else {
         return solution;
     }
@@ -603,28 +641,16 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             int sheetWidthLocal = static_cast<int>(sheet.width * NFPCalculator::NFP_SCALE);
             int sheetHeightLocal = static_cast<int>(sheet.height * NFPCalculator::NFP_SCALE);
 
-            if (sheet.placedItems.empty()) {
+            if (sheet.placedItems.empty() && !sheet.isCustomShape) {
                 if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
-                    PlacedItem newItem;
-                    newItem.id = partIdx;
-                    newItem.rotation = rotIdx;
-                    newItem.x = 0;
-                    newItem.y = 0;
-                    newItem.poly = partShape;
-
+                    PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
                     sheet.placedItems.push_back(newItem);
 
-                    PlacedPart pp;
-                    pp.originalPartId = originalPart.id;
-                    pp.sheetId = sheet.id;
-                    pp.rotation = rotIdx * angleStep;
-                    pp.x = offsetAmount;
-                    pp.y = offsetAmount;
+                    PlacedPart pp{originalPart.id, sheet.id, offsetAmount, offsetAmount, rotIdx * angleStep};
                     solution.placedParts.push_back(pp);
                     solution.partsMap[originalPart.id] = originalPart;
 
                     placed = true;
-                    // qDebug() << "      -> Placed on EMPTY sheet" << sheet.id;
                     break;
                 }
             }
@@ -632,39 +658,40 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             int maxX = sheetWidthLocal - pW;
             int maxY = sheetHeightLocal - pH;
 
-            if (maxX < 0 || maxY < 0) continue;
-
-            Path64 innerNFPPath;
-            innerNFPPath.push_back(Point64(0, 0));
-            innerNFPPath.push_back(Point64(maxX, 0));
-            innerNFPPath.push_back(Point64(maxX, maxY));
-            innerNFPPath.push_back(Point64(0, maxY));
-
             Paths64 innerNFPClipper;
-            innerNFPClipper.push_back(innerNFPPath);
+            if (sheet.isCustomShape) {
+                auto it = innerNfpCache.find({sheet.reqId, originalPart.id, rotIdx});
+                if (it != innerNfpCache.end()) {
+                    innerNFPClipper = it->second;
+                }
+            } else {
+                if (maxX >= 0 && maxY >= 0) {
+                    Path64 innerNFPPath = { Point64(0, 0), Point64(maxX, 0), Point64(maxX, maxY), Point64(0, maxY) };
+                    innerNFPClipper.push_back(innerNFPPath);
+                }
+            }
+
+            if (innerNFPClipper.empty()) continue;
 
             if (!sheet.placedItems.empty()) {
                 Paths64 obstacles;
-
                 for (const auto& placedItem : sheet.placedItems) {
-                    // const BoostPolygonSet& polyA = rotatedPartsCache.at(parts[placedItem.id].id)[placedItem.rotation];
-                    // BoostPolygonSet outerNFP = NFPCalculator::calculateOuterNFP(polyA, partShape);
-                    // Paths64 outerPath = NFPCalculator::toClipper(outerNFP);
-
                     int idA = parts[placedItem.id].id;
                     int rotA = placedItem.rotation;
                     int idB = originalPart.id;
                     int rotB = rotIdx;
 
-                    Paths64 outerPath = nfpCache.at({idA, rotA, idB, rotB});
-
-                    for (auto& path : outerPath) {
-                        for (auto& pt : path) {
-                            pt.x += placedItem.x;
-                            pt.y += placedItem.y;
+                    auto it = nfpCache.find({idA, rotA, idB, rotB});
+                    if (it != nfpCache.end()) {
+                        Paths64 outerPath = it->second;
+                        for (auto& path : outerPath) {
+                            for (auto& pt : path) {
+                                pt.x += placedItem.x;
+                                pt.y += placedItem.y;
+                            }
                         }
+                        obstacles.insert(obstacles.end(), outerPath.begin(), outerPath.end());
                     }
-                    obstacles.insert(obstacles.end(), outerPath.begin(), outerPath.end());
                 }
 
                 Paths64 finalNFP;
@@ -672,7 +699,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 clipper.AddSubject(innerNFPClipper);
                 clipper.AddClip(obstacles);
                 clipper.Execute(ClipType::Difference, FillRule::NonZero, finalNFP);
-
                 innerNFPClipper = finalNFP;
             }
 
@@ -705,13 +731,12 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 }
             }
 
-            constexpr double epsilon = 1e-5;
-            constexpr double contactDilation = 50.0 * NFPCalculator::NFP_SCALE;
-
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
-                    if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
-                        continue;
+                    if (!sheet.isCustomShape) {
+                        if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
+                            continue;
+                        }
                     }
 
                     double currentX = static_cast<double>(pt.x);
@@ -753,28 +778,20 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             }
 
             if (foundPos) {
-                PlacedItem newItem;
-                newItem.id = partIdx;
-                newItem.rotation = rotIdx;
-                newItem.x = bestPos.x;
-                newItem.y = bestPos.y;
-
-                newItem.poly = partShape;
+                PlacedItem newItem{partIdx, rotIdx, partShape, static_cast<int>(bestPos.x), static_cast<int>(bestPos.y)};
                 moveBoostSet(newItem.poly, newItem.x, newItem.y);
-
                 sheet.placedItems.push_back(newItem);
 
                 PlacedPart pp;
                 pp.originalPartId = originalPart.id;
                 pp.sheetId = sheet.id;
-                pp.rotation = rotIdx * 90.0;
+                pp.rotation = rotIdx * angleStep;
                 pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount;
                 pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount;
                 solution.placedParts.push_back(pp);
                 solution.partsMap[originalPart.id] = originalPart;
 
                 placed = true;
-                // qDebug() << "      -> Placed on sheet" << sheet.id << "at" << pp.x << pp.y;
                 break;
             }
         }
@@ -788,26 +805,64 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
                 SheetCtx newSheet{
                     static_cast<int>(sheets.size()) + 1,
+                    nextS->reqId,
                     {},
                     nextS->width,
-                    nextS->height
+                    nextS->height,
+                    nextS->isCustomShape,
+                    nextS->customShape
                 };
 
                 int newSheetWLocal = static_cast<int>(newSheet.width * NFPCalculator::NFP_SCALE);
                 int newSheetHLocal = static_cast<int>(newSheet.height * NFPCalculator::NFP_SCALE);
 
-                if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
-                    PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
-                    newSheet.placedItems.push_back(newItem);
-                    sheets.push_back(newSheet);
+                if (!newSheet.isCustomShape) {
+                    if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
+                        PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
+                        newSheet.placedItems.push_back(newItem);
+                        sheets.push_back(newSheet);
 
-                    PlacedPart pp{originalPart.id, newSheet.id, 0.0, 0.0, rotIdx * 90.0};
-                    pp.x = offsetAmount;
-                    pp.y = offsetAmount;
+                        PlacedPart pp{originalPart.id, newSheet.id, offsetAmount, offsetAmount, rotIdx * angleStep};
+                        solution.placedParts.push_back(pp);
+                        solution.partsMap[originalPart.id] = originalPart;
+                        placedOnNewSheet = true;
+                    }
+                } else {
+                    auto it = innerNfpCache.find({newSheet.reqId, originalPart.id, rotIdx});
+                    if (it != innerNfpCache.end() && !it->second.empty()) {
+                        double bestX = std::numeric_limits<double>::max();
+                        double bestY = std::numeric_limits<double>::max();
+                        Point64 initialPos;
+                        bool foundInitial = false;
 
-                    solution.placedParts.push_back(pp);
-                    solution.partsMap[originalPart.id] = originalPart;
-                    placedOnNewSheet = true;
+                        for (const auto& path : it->second) {
+                            for (const auto& pt : path) {
+                                if (pt.x < bestX || (std::abs(pt.x - bestX) <= epsilon && pt.y < bestY)) {
+                                    bestX = static_cast<double>(pt.x);
+                                    bestY = static_cast<double>(pt.y);
+                                    initialPos = pt;
+                                    foundInitial = true;
+                                }
+                            }
+                        }
+
+                        if (foundInitial) {
+                            PlacedItem newItem{partIdx, rotIdx, partShape, static_cast<int>(initialPos.x), static_cast<int>(initialPos.y)};
+                            moveBoostSet(newItem.poly, newItem.x, newItem.y);
+                            newSheet.placedItems.push_back(newItem);
+                            sheets.push_back(newSheet);
+
+                            PlacedPart pp;
+                            pp.originalPartId = originalPart.id;
+                            pp.sheetId = newSheet.id;
+                            pp.rotation = rotIdx * angleStep;
+                            pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount;
+                            pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount;
+                            solution.placedParts.push_back(pp);
+                            solution.partsMap[originalPart.id] = originalPart;
+                            placedOnNewSheet = true;
+                        }
+                    }
                 }
             }
 
@@ -846,6 +901,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         ns.height = sheet.height;
         ns.usedWidth = realMaxX;
         ns.usedHeight = realMaxY;
+        ns.isCustomShape = sheet.isCustomShape;
+        ns.customShape = sheet.customShape;
         solution.usedSheets.push_back(ns);
 
         totalBoundingBoxArea += (realMaxX * realMaxY);

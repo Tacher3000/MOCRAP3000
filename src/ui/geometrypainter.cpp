@@ -163,23 +163,39 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
     QPen sheetPen(Qt::black, 0);
     QPen partPen(Qt::black, 0);
 
+    std::map<int, double> sheetOffsets;
     double currentSheetOffsetX = 0.0;
     const double margin = 50.0;
 
-    double sheetVizStep = 0;
-    if (!solution.usedSheets.empty()) {
-        sheetVizStep = solution.usedSheets[0].width + margin;
-    }
-
     for (const auto& sheet : solution.usedSheets) {
-        scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, Qt::NoBrush);
+        sheetOffsets[sheet.id] = currentSheetOffsetX;
+        double drawnWidth = sheet.width;
+        double drawnHeight = sheet.height;
+
+        if (sheet.isCustomShape && sheet.customShape.has_value()) {
+            const Part& cShape = sheet.customShape.value();
+            QPainterPath path = geometry::toQPainterPath(cShape.polygon);
+            QRectF bRect = path.boundingRect();
+
+            QTransform t;
+            t.translate(currentSheetOffsetX - bRect.left(), -bRect.top());
+
+            QPainterPath sheetPath = geometry::partToPath(cShape);
+            QPainterPath finalSheetPath = t.map(sheetPath);
+            scene->addPath(finalSheetPath, sheetPen, Qt::NoBrush);
+
+            drawnWidth = bRect.width();
+            drawnHeight = bRect.height();
+        } else {
+            scene->addRect(currentSheetOffsetX, 0, sheet.width, sheet.height, sheetPen, Qt::NoBrush);
+        }
 
         if (solution.showRemnants){
             QPen bboxPen(QColor(0, 100, 255, 180), 0, Qt::DashLine);
             scene->addRect(currentSheetOffsetX, 0, sheet.usedWidth, sheet.usedHeight, bboxPen, Qt::NoBrush);
 
-            double remX = sheet.width - sheet.usedWidth;
-            double remY = sheet.height - sheet.usedHeight;
+            double remX = drawnWidth - sheet.usedWidth;
+            double remY = drawnHeight - sheet.usedHeight;
             QString infoText = QStringLiteral("Лист %1\nПолезный ост. X: %2 мм\nПолезный ост. Y: %3 мм")
                                    .arg(sheet.id)
                                    .arg(remX > 0 ? QString::number(remX, 'f', 1) : "0.0")
@@ -190,7 +206,8 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
             t->setPos(currentSheetOffsetX, -45);
             t->setTransform(QTransform::fromScale(1, -1), true);
         }
-        currentSheetOffsetX += sheet.width + margin;
+
+        currentSheetOffsetX += drawnWidth + margin;
     }
 
     std::map<int, QColor> colorMap;
@@ -209,14 +226,12 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
         QTransform r;
         r.rotate(placedPart.rotation);
 
-        QRectF rotatedRect = (t1 * r).map(path).boundingRect();
-
         QTransform t2;
+        QRectF rotatedRect = (t1 * r).map(path).boundingRect();
         t2.translate(-rotatedRect.left(), -rotatedRect.top());
 
         QTransform t3;
-        double sheetOffset = (placedPart.sheetId - 1) * sheetVizStep;
-        t3.translate(sheetOffset + placedPart.x, placedPart.y);
+        t3.translate(sheetOffsets[placedPart.sheetId] + placedPart.x, placedPart.y);
 
         QTransform finalTransform = t1 * r * t2 * t3;
 

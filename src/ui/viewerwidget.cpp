@@ -59,7 +59,7 @@ void CustomGraphicsView::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void CustomGraphicsView::resetView() {
-    this->setTransform(QTransform());
+    this->setTransform(QTransform::fromScale(1, -1));
 }
 
 ViewerWidget::ViewerWidget(QWidget *parent) : QWidget(parent) {
