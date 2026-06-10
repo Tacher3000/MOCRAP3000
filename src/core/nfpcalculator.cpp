@@ -139,6 +139,9 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
         for (auto it = boost::polygon::begin_points(poly); it != boost::polygon::end_points(poly); ++it) {
             pts.push_back(BoostPoint(-it->x(), -it->y()));
         }
+
+        std::ranges::reverse(pts);
+
         BoostPolygon negPoly;
         boost::polygon::set_points(negPoly, pts.begin(), pts.end());
         Part_negated.insert(negPoly);
@@ -196,6 +199,9 @@ BoostPolygonSet NFPCalculator::calculateInnerNFP(const BoostPolygonSet& Sheet, c
             for (const auto& pt : pPath) {
                 sp.push_back(Point64(-pt.x + testPt.x, -pt.y + testPt.y));
             }
+
+            std::ranges::reverse(sp);
+
             shiftedPart.push_back(sp);
         }
 

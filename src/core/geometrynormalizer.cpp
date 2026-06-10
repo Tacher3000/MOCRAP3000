@@ -69,27 +69,28 @@ std::vector<Point> processBulge(const Point& p1, const Point& p2, double bulge) 
     double chordLen = std::sqrt(dx*dx + dy*dy);
     if (chordLen < EPSILON) return {};
 
-    double radius = chordLen * (1 + bulge*bulge) / (4 * std::abs(bulge));
-    double theta = 4 * std::atan(std::abs(bulge));
+    double absBulge = std::abs(bulge);
+    double theta = 4.0 * std::atan(absBulge);
+    double radius = chordLen / (2.0 * std::sin(theta / 2.0));
+    double distToCenter = radius * std::cos(theta / 2.0);
 
     double mx = (p1.x + p2.x) / 2.0;
     double my = (p1.y + p2.y) / 2.0;
 
-    double side = (bulge > 0) ? 1.0 : -1.0;
-    if (std::abs(bulge) > 1.0) side = -side;
+    bool ccw = bulge > 0.0;
+    double ux = -dy / chordLen;
+    double uy = dx / chordLen;
 
-    double halfChord = chordLen / 2.0;
-    double distToCenter = std::sqrt(std::max(0.0, radius*radius - halfChord*halfChord));
+    if (!ccw) {
+        ux = -ux;
+        uy = -uy;
+    }
 
-    double nx = -dy / chordLen;
-    double ny = dx / chordLen;
-
-    double cx = mx - side * distToCenter * nx;
-    double cy = my - side * distToCenter * ny;
+    double cx = mx + distToCenter * ux;
+    double cy = my + distToCenter * uy;
 
     double startAng = std::atan2(p1.y - cy, p1.x - cx);
     double endAng = std::atan2(p2.y - cy, p2.x - cx);
-    bool ccw = bulge > 0;
 
     return generateArcPoints(cx, cy, radius, startAng, endAng, ccw);
 }

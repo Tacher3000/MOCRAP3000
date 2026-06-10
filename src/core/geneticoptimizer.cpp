@@ -777,6 +777,18 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 }
             }
 
+            double sheetOffsetX = 0.0;
+            double sheetOffsetY = 0.0;
+            if (sheet.isCustomShape && sheet.customShape.has_value()) {
+                BoostPolygonSet bpSet = GeometryAdapter::toBoost(sheet.customShape.value());
+                namespace bp = boost::polygon;
+                bp::rectangle_data<int> rect;
+                if (bp::extents(rect, bpSet)) {
+                    sheetOffsetX = static_cast<double>(bp::xl(rect)) / NFPCalculator::NFP_SCALE;
+                    sheetOffsetY = static_cast<double>(bp::yl(rect)) / NFPCalculator::NFP_SCALE;
+                }
+            }
+
             if (foundPos) {
                 PlacedItem newItem{partIdx, rotIdx, partShape, static_cast<int>(bestPos.x), static_cast<int>(bestPos.y)};
                 moveBoostSet(newItem.poly, newItem.x, newItem.y);
@@ -786,8 +798,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 pp.originalPartId = originalPart.id;
                 pp.sheetId = sheet.id;
                 pp.rotation = rotIdx * angleStep;
-                pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount;
-                pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount;
+                pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount + sheetOffsetX;
+                pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount + sheetOffsetY;
                 solution.placedParts.push_back(pp);
                 solution.partsMap[originalPart.id] = originalPart;
 
@@ -852,12 +864,24 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                             newSheet.placedItems.push_back(newItem);
                             sheets.push_back(newSheet);
 
+                            double tOffsetX = 0.0;
+                            double tOffsetY = 0.0;
+                            if (newSheet.customShape.has_value()) {
+                                BoostPolygonSet bpSet = GeometryAdapter::toBoost(newSheet.customShape.value());
+                                namespace bp = boost::polygon;
+                                bp::rectangle_data<int> rect;
+                                if (bp::extents(rect, bpSet)) {
+                                    tOffsetX = static_cast<double>(bp::xl(rect)) / NFPCalculator::NFP_SCALE;
+                                    tOffsetY = static_cast<double>(bp::yl(rect)) / NFPCalculator::NFP_SCALE;
+                                }
+                            }
+
                             PlacedPart pp;
                             pp.originalPartId = originalPart.id;
                             pp.sheetId = newSheet.id;
                             pp.rotation = rotIdx * angleStep;
-                            pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount;
-                            pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount;
+                            pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount + tOffsetX;
+                            pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount + tOffsetY;
                             solution.placedParts.push_back(pp);
                             solution.partsMap[originalPart.id] = originalPart;
                             placedOnNewSheet = true;
