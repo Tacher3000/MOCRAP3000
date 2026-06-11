@@ -133,70 +133,14 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         }
     }
 
-    // --- 3. КЭШИРОВАНИЕ ПАРНЫХ NFP (Pairwise Batching) ---
-    NFPCacheType nfpCache;
-
-    #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < static_cast<int>(uniqueParts.size()); ++i) {
-        if (stopFlag) continue;
-        for (int j = 0; j < static_cast<int>(uniqueParts.size()); ++j) {
-            if (stopFlag) continue;
-            const Part& partA = uniqueParts[i];
-            const Part& partB = uniqueParts[j];
-
-            for (int rotA = 0; rotA < rotCount; ++rotA) {
-                for (int rotB = 0; rotB < rotCount; ++rotB) {
-                    const auto& polyA = rotatedPartsCache.at(partA.id)[rotA];
-                    const auto& polyB = rotatedPartsCache.at(partB.id)[rotB];
-
-                    BoostPolygonSet nfpBoost = NFPCalculator::calculateOuterNFP(polyA, polyB);
-                    Paths64 nfpClipper = NFPCalculator::toClipper(nfpBoost);
-
-                    #pragma omp critical
-                    {
-                        nfpCache[{partA.id, rotA, partB.id, rotB}] = nfpClipper;
-                    }
-                }
-            }
-        }
-    }
-    qDebug() << "NFP Cache ready! Entries:" << nfpCache.size();
-
-    InnerNFPCacheType innerNfpCache;
-    std::vector<SheetRequest> customSheets;
-    std::copy_if(params.sheets.begin(), params.sheets.end(), std::back_inserter(customSheets),
-                 [](const SheetRequest& sr) { return sr.isCustomShape && sr.customShape.has_value(); });
-
-    if (!customSheets.empty()) {
-        #pragma omp parallel for schedule(dynamic)
-        for (int s = 0; s < static_cast<int>(customSheets.size()); ++s) {
-            if (stopFlag) continue;
-            const auto& sheetReq = customSheets[s];
-            BoostPolygonSet sheetPoly = GeometryAdapter::toBoost(sheetReq.customShape.value());
-            normalizePolySet(sheetPoly);
-
-            for (int i = 0; i < static_cast<int>(uniqueParts.size()); ++i) {
-                if (stopFlag) continue;
-                const Part& part = uniqueParts[i];
-                for (int r = 0; r < rotCount; ++r) {
-                    const auto& pShape = rotatedPartsCache.at(part.id)[r];
-                    BoostPolygonSet innerFit = NFPCalculator::calculateInnerNFP(sheetPoly, pShape);
-                    Paths64 innerClipper = NFPCalculator::toClipper(innerFit);
-
-                    #pragma omp critical
-                    {
-                        innerNfpCache[{sheetReq.id, part.id, r}] = innerClipper;
-                    }
-                }
-            }
-        }
-    }
+    m_nfpCache.clear();
+    m_innerNfpCache.clear();
 
     qDebug() << "Инициализация первичной популяции";
     initializePopulation(parts, m_config.populationSize, rotCount);
 
     // qDebug() << "Оценка первой популяции";
-    evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, innerNfpCache, stopFlag);
+    evaluatePopulation(m_population, parts, params, rotatedPartsCache, stopFlag);
 
     Individual bestInd = m_population[0];
     if (progressCallback) progressCallback(bestInd.cachedSolution);
@@ -230,7 +174,7 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
         m_population = std::move(newPop);
 
         // qDebug() << "Evaluating population...";
-        evaluatePopulation(m_population, parts, params, rotatedPartsCache, nfpCache, innerNfpCache, stopFlag);
+        evaluatePopulation(m_population, parts, params, rotatedPartsCache, stopFlag);
         if (stopFlag) break;
         // qDebug() << "Evaluation finished.";
 
@@ -386,8 +330,6 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
                                           const std::vector<Part>& parts,
                                           const NestingParameters& params,
                                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                                          const NFPCacheType& nfpCache,
-                                          const InnerNFPCacheType& innerNfpCache,
                                           const std::atomic<bool>& stopFlag)
 {
     double angleStep = 360.0 / std::max(1, params.allowedRotations);
@@ -396,7 +338,7 @@ void GeneticOptimizer::evaluatePopulation(std::vector<Individual>& population,
         if (stopFlag) continue;
 
         auto& ind = population[i];
-        ind.cachedSolution = decode(ind, parts, params, rotatedPartsCache, nfpCache, innerNfpCache);
+        ind.cachedSolution = decode(ind, parts, params, rotatedPartsCache);
 
         double fitness = ind.cachedSolution.usedSheets.size() * 1e6;
         double centerOfMassPenalty = 0.0;
@@ -564,9 +506,7 @@ void GeneticOptimizer::mutate(Individual& ind, int allowedRotations) {
 NestingSolution GeneticOptimizer::decode(const Individual& ind,
                                          const std::vector<Part>& parts,
                                          const NestingParameters& params,
-                                         const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                                         const NFPCacheType& nfpCache,
-                                         const InnerNFPCacheType& innerNfpCache)
+                                         const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache)
 {
     // qDebug() << "  [Decode] Start decoding individual with" << ind.partIndices.size() << "parts.";
 
@@ -660,9 +600,25 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
             Paths64 innerNFPClipper;
             if (sheet.isCustomShape) {
-                auto it = innerNfpCache.find({sheet.reqId, originalPart.id, rotIdx});
-                if (it != innerNfpCache.end()) {
-                    innerNFPClipper = it->second;
+                auto key = std::make_tuple(sheet.reqId, originalPart.id, rotIdx);
+
+                {
+                    std::shared_lock lock(m_innerNfpMutex);
+                    auto it = m_innerNfpCache.find(key);
+                    if (it != m_innerNfpCache.end()) {
+                        innerNFPClipper = it->second;
+                    }
+                }
+
+                if (innerNFPClipper.empty()) {
+                    BoostPolygonSet sheetPoly = GeometryAdapter::toBoost(sheet.customShape.value());
+                    normalizePolySet(sheetPoly);
+                    const auto& pShape = rotatedPartsCache.at(originalPart.id)[rotIdx];
+                    BoostPolygonSet innerFit = NFPCalculator::calculateInnerNFP(sheetPoly, pShape);
+                    innerNFPClipper = NFPCalculator::toClipper(innerFit);
+
+                    std::unique_lock lock(m_innerNfpMutex);
+                    m_innerNfpCache[key] = innerNFPClipper;
                 }
             } else {
                 if (maxX >= 0 && maxY >= 0) {
@@ -675,23 +631,46 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
             if (!sheet.placedItems.empty()) {
                 Paths64 obstacles;
+                obstacles.reserve(sheet.placedItems.size() * 2);
+
                 for (const auto& placedItem : sheet.placedItems) {
                     int idA = parts[placedItem.id].id;
                     int rotA = placedItem.rotation;
                     int idB = originalPart.id;
                     int rotB = rotIdx;
 
-                    auto it = nfpCache.find({idA, rotA, idB, rotB});
-                    if (it != nfpCache.end()) {
-                        Paths64 outerPath = it->second;
-                        for (auto& path : outerPath) {
-                            for (auto& pt : path) {
-                                pt.x += placedItem.x;
-                                pt.y += placedItem.y;
-                            }
+                    auto key = std::make_tuple(idA, rotA, idB, rotB);
+                    Paths64 outerPath;
+
+                    {
+                        std::shared_lock lock(m_nfpMutex);
+                        auto it = m_nfpCache.find(key);
+                        if (it != m_nfpCache.end()) {
+                            outerPath = it->second;
                         }
-                        obstacles.insert(obstacles.end(), outerPath.begin(), outerPath.end());
                     }
+
+                    if (outerPath.empty()) {
+                        std::unique_lock lock(m_nfpMutex);
+                        auto it = m_nfpCache.find(key);
+                        if (it != m_nfpCache.end()) {
+                            outerPath = it->second;
+                        } else {
+                            const auto& polyA = rotatedPartsCache.at(idA)[rotA];
+                            const auto& polyB = rotatedPartsCache.at(idB)[rotB];
+                            BoostPolygonSet nfpBoost = NFPCalculator::calculateOuterNFP(polyA, polyB);
+                            outerPath = NFPCalculator::toClipper(nfpBoost);
+                            m_nfpCache[key] = outerPath;
+                        }
+                    }
+
+                    for (auto& path : outerPath) {
+                        for (auto& pt : path) {
+                            pt.x += placedItem.x;
+                            pt.y += placedItem.y;
+                        }
+                    }
+                    obstacles.insert(obstacles.end(), outerPath.begin(), outerPath.end());
                 }
 
                 Paths64 finalNFP;
@@ -840,14 +819,39 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                         placedOnNewSheet = true;
                     }
                 } else {
-                    auto it = innerNfpCache.find({newSheet.reqId, originalPart.id, rotIdx});
-                    if (it != innerNfpCache.end() && !it->second.empty()) {
+                    Paths64 newSheetInnerNFP;
+                    auto key = std::make_tuple(newSheet.reqId, originalPart.id, rotIdx);
+
+                    {
+                        std::shared_lock lock(m_innerNfpMutex);
+                        auto it = m_innerNfpCache.find(key);
+                        if (it != m_innerNfpCache.end()) {
+                            newSheetInnerNFP = it->second;
+                        }
+                    }
+
+                    if (newSheetInnerNFP.empty()) {
+                        std::unique_lock lock(m_innerNfpMutex);
+                        auto it = m_innerNfpCache.find(key);
+                        if (it != m_innerNfpCache.end()) {
+                            newSheetInnerNFP = it->second;
+                        } else {
+                            BoostPolygonSet sheetPoly = GeometryAdapter::toBoost(newSheet.customShape.value());
+                            normalizePolySet(sheetPoly);
+                            const auto& pShape = rotatedPartsCache.at(originalPart.id)[rotIdx];
+                            BoostPolygonSet innerFit = NFPCalculator::calculateInnerNFP(sheetPoly, pShape);
+                            newSheetInnerNFP = NFPCalculator::toClipper(innerFit);
+                            m_innerNfpCache[key] = newSheetInnerNFP;
+                        }
+                    }
+
+                    if (!newSheetInnerNFP.empty()) {
                         double bestX = std::numeric_limits<double>::max();
                         double bestY = std::numeric_limits<double>::max();
                         Point64 initialPos;
                         bool foundInitial = false;
 
-                        for (const auto& path : it->second) {
+                        for (const auto& path : newSheetInnerNFP) {
                             for (const auto& pt : path) {
                                 if (pt.x < bestX || (std::abs(pt.x - bestX) <= epsilon && pt.y < bestY)) {
                                     bestX = static_cast<double>(pt.x);

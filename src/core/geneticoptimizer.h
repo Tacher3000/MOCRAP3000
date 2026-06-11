@@ -11,6 +11,7 @@
 #include <map>
 #include <tuple>
 #include <clipper2/clipper.h>
+#include <shared_mutex>
 
 /**
  * @brief Особь в популяции генетического алгоритма.
@@ -48,8 +49,6 @@ private:
                             const std::vector<Part>& parts,
                             const NestingParameters& params,
                             const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                            const NFPCacheType& nfpCache,
-                            const InnerNFPCacheType& innerNfpCache,
                             const std::atomic<bool>& stopFlag);
 
     Individual selection(const std::vector<Individual>& population);
@@ -59,9 +58,7 @@ private:
     NestingSolution decode(const Individual& ind,
                            const std::vector<Part>& parts,
                            const NestingParameters& params,
-                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache,
-                           const NFPCacheType& nfpCache,
-                           const InnerNFPCacheType& innerNfpCache);
+                           const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache);
 
     BoostPolygonSet rotatePolySet(const BoostPolygonSet& set, double angleDeg);
     void normalizePolySet(BoostPolygonSet& set);
@@ -69,6 +66,11 @@ private:
     std::vector<Individual> m_population;
     std::mt19937 m_rng;
     Config m_config;
+
+    mutable std::shared_mutex m_nfpMutex;
+    mutable std::shared_mutex m_innerNfpMutex;
+    NFPCacheType m_nfpCache;
+    InnerNFPCacheType m_innerNfpCache;
 };
 
 #endif // GENETICOPTIMIZER_H
