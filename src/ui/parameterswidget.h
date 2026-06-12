@@ -24,6 +24,7 @@ private:
     QLineEdit *sheetHeight;
     QLineEdit *partSpacing;
     QLineEdit *cutThickness;
+    QLineEdit *sheetMargin;
     QCheckBox *showRemnantsCheck;
     QSpinBox *rotationsSpin;
 

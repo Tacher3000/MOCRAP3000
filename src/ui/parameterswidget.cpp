@@ -18,17 +18,22 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
     QString savedThickness = settings.value("nesting/cutThickness", "2.0").toString();
     bool savedShowRemnants = settings.value("nesting/showRemnants", true).toBool();
     int savedRotations = settings.value("nesting/allowedRotations", 4).toInt();
+    QString savedMargin = settings.value("nesting/sheetMargin", "5.0").toString();
 
     QGroupBox *spacingGroup = new QGroupBox(tr("Отступы (мм)"), this);
-    QHBoxLayout *spacingLayout = new QHBoxLayout(spacingGroup);
+    QGridLayout *spacingLayout = new QGridLayout(spacingGroup);
 
-    spacingLayout->addWidget(new QLabel(tr("Между деталями:")));
+    spacingLayout->addWidget(new QLabel(tr("От края листа:")), 0, 0);
+    sheetMargin = new QLineEdit(savedMargin, this);
+    spacingLayout->addWidget(sheetMargin, 0, 1);
+
+    spacingLayout->addWidget(new QLabel(tr("Между деталями:")), 1, 0);
     partSpacing = new QLineEdit(savedSpacing, this);
-    spacingLayout->addWidget(partSpacing);
+    spacingLayout->addWidget(partSpacing, 1, 1);
 
-    spacingLayout->addWidget(new QLabel(tr("Толщина реза:")));
+    spacingLayout->addWidget(new QLabel(tr("Толщина реза:")), 2, 0);
     cutThickness = new QLineEdit(savedThickness, this);
-    spacingLayout->addWidget(cutThickness);
+    spacingLayout->addWidget(cutThickness, 2, 1);
 
     layout->addWidget(spacingGroup);
     layout->addStretch();
@@ -61,6 +66,7 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
 
 void ParametersWidget::accept() {
     QSettings settings("MOCRAP_Inc", "MOCRAP3000");
+    settings.setValue("nesting/sheetMargin", sheetMargin->text());
     settings.setValue("nesting/partSpacing", partSpacing->text());
     settings.setValue("nesting/cutThickness", cutThickness->text());
     settings.setValue("nesting/showRemnants", showRemnantsCheck->isChecked());
@@ -72,6 +78,7 @@ void ParametersWidget::accept() {
 NestingParameters ParametersWidget::getNestingParameters() const {
     NestingParameters params;
 
+    params.sheetMargin = sheetMargin->text().replace(',', '.').toDouble();
     params.partSpacing = partSpacing->text().replace(',', '.').toDouble();
     params.cutThickness = cutThickness->text().replace(',', '.').toDouble();
     params.showRemnants = showRemnantsCheck->isChecked();

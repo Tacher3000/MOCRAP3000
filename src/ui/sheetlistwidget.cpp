@@ -44,13 +44,23 @@ SheetItemWidget::SheetItemWidget(const SheetRequest& req, QWidget* parent)
     mainLayout->addWidget(previewView);
 
     QVBoxLayout* infoLayout = new QVBoxLayout();
-    QString titleText = req.isCustomShape ?
-                            QString::fromStdString(req.customShape.value().name) :
-                            QString("%1 x %2 мм").arg(req.width).arg(req.height);
+    QString titleText;
+    QString dimText;
+
+    if (req.isCustomShape && req.customShape.has_value()) {
+        titleText = QString::fromStdString(req.customShape.value().name);
+        double width = req.customShape.value().polygon.maxX - req.customShape.value().polygon.minX;
+        double height = req.customShape.value().polygon.maxY - req.customShape.value().polygon.minY;
+        dimText = QString("%1 x %2 мм").arg(width, 0, 'f', 1).arg(height, 0, 'f', 1);
+    } else {
+        titleText = QString("Лист %1").arg(req.id);
+        dimText = QString("%1 x %2 мм").arg(req.width).arg(req.height);
+    }
 
     QString qtyText = req.isInfinite ? tr("Беск.") : QString("%1 шт.").arg(req.quantity);
 
     infoLayout->addWidget(new QLabel("<b>" + titleText + "</b>"));
+    infoLayout->addWidget(new QLabel(dimText));
     infoLayout->addWidget(new QLabel(qtyText));
     infoLayout->addStretch();
 

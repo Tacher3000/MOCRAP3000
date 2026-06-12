@@ -113,13 +113,6 @@ NestingSolution GeneticOptimizer::optimize(const std::vector<Part>& parts,
 
     for(const auto& part : uniqueParts) {
         BoostPolygonSet base = GeometryAdapter::toBoost(part);
-
-        if (boostOffset > 0) {
-            Paths64 clipBase = NFPCalculator::toClipper(base);
-            clipBase = InflatePaths(clipBase, boostOffset, JoinType::Round, EndType::Polygon);
-            base = NFPCalculator::fromClipper(clipBase);
-        }
-
         normalizePolySet(base);
 
         rotatedPartsCache[part.id].resize(rotCount);
@@ -508,13 +501,16 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                                          const NestingParameters& params,
                                          const std::map<int, std::vector<BoostPolygonSet>>& rotatedPartsCache)
 {
-    // qDebug() << "  [Decode] Start decoding individual with" << ind.partIndices.size() << "parts.";
-
     constexpr double epsilon = 1e-5;
     constexpr double contactDilation = 50.0 * NFPCalculator::NFP_SCALE;
     NestingSolution solution;
 
-    // --- 1. СКЛАД ЛИСТОВ ---
+    // Конвертация отступов в масштаб NFP
+    long long marginBoost = static_cast<long long>(params.sheetMargin * NFPCalculator::NFP_SCALE);
+    long long partDistanceBoost = static_cast<long long>((params.partSpacing + params.cutThickness) * NFPCalculator::NFP_SCALE);
+    double angleStep = 360.0 / std::max(1, params.allowedRotations);
+
+    // Склад листов
     struct AvailableSheet {
         int reqId;
         double width, height;
@@ -557,17 +553,12 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
         return solution;
     }
 
-    double offsetAmount = (params.partSpacing + params.cutThickness) / 2.0;
-    double angleStep = 360.0 / std::max(1, params.allowedRotations);
-
     for (size_t i = 0; i < ind.partIndices.size(); ++i) {
         int partIdx = ind.partIndices[i];
         int rotIdx = ind.rotations[i];
         const Part& originalPart = parts[partIdx];
 
         const BoostPolygonSet& partShape = rotatedPartsCache.at(originalPart.id)[rotIdx];
-
-        // qDebug() << "    [Decode] Placing part" << i << "(ID:" << originalPart.id << ")";
 
         namespace bp = boost::polygon;
         bp::rectangle_data<int> partRect;
@@ -581,12 +572,19 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             int sheetWidthLocal = static_cast<int>(sheet.width * NFPCalculator::NFP_SCALE);
             int sheetHeightLocal = static_cast<int>(sheet.height * NFPCalculator::NFP_SCALE);
 
+            // Быстрый путь для первой детали на прямоугольном листе
             if (sheet.placedItems.empty() && !sheet.isCustomShape) {
-                if (pW <= sheetWidthLocal && pH <= sheetHeightLocal) {
-                    PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
+                if (pW <= sheetWidthLocal - 2 * marginBoost && pH <= sheetHeightLocal - 2 * marginBoost) {
+                    PlacedItem newItem{partIdx, rotIdx, partShape, static_cast<int>(marginBoost), static_cast<int>(marginBoost)};
+                    moveBoostSet(newItem.poly, newItem.x, newItem.y);
                     sheet.placedItems.push_back(newItem);
 
-                    PlacedPart pp{originalPart.id, sheet.id, offsetAmount, offsetAmount, rotIdx * angleStep};
+                    PlacedPart pp;
+                    pp.originalPartId = originalPart.id;
+                    pp.sheetId = sheet.id;
+                    pp.rotation = rotIdx * angleStep;
+                    pp.x = static_cast<double>(marginBoost) / NFPCalculator::NFP_SCALE;
+                    pp.y = static_cast<double>(marginBoost) / NFPCalculator::NFP_SCALE;
                     solution.placedParts.push_back(pp);
                     solution.partsMap[originalPart.id] = originalPart;
 
@@ -594,9 +592,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     break;
                 }
             }
-
-            int maxX = sheetWidthLocal - pW;
-            int maxY = sheetHeightLocal - pH;
 
             Paths64 innerNFPClipper;
             if (sheet.isCustomShape) {
@@ -620,9 +615,22 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                     std::unique_lock lock(m_innerNfpMutex);
                     m_innerNfpCache[key] = innerNFPClipper;
                 }
+
+                // Сужаем доступную зону на листе (отступ от краев)
+                if (!innerNFPClipper.empty() && marginBoost > 0) {
+                    innerNFPClipper = InflatePaths(innerNFPClipper, -marginBoost, JoinType::Miter, EndType::Polygon);
+                }
             } else {
-                if (maxX >= 0 && maxY >= 0) {
-                    Path64 innerNFPPath = { Point64(0, 0), Point64(maxX, 0), Point64(maxX, maxY), Point64(0, maxY) };
+                long long maxX = sheetWidthLocal - marginBoost - pW;
+                long long maxY = sheetHeightLocal - marginBoost - pH;
+
+                if (maxX >= marginBoost && maxY >= marginBoost) {
+                    Path64 innerNFPPath = {
+                        Point64(marginBoost, marginBoost),
+                        Point64(maxX, marginBoost),
+                        Point64(maxX, maxY),
+                        Point64(marginBoost, maxY)
+                    };
                     innerNFPClipper.push_back(innerNFPPath);
                 }
             }
@@ -660,6 +668,11 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                             const auto& polyB = rotatedPartsCache.at(idB)[rotB];
                             BoostPolygonSet nfpBoost = NFPCalculator::calculateOuterNFP(polyA, polyB);
                             outerPath = NFPCalculator::toClipper(nfpBoost);
+
+                            // Раздуваем зону коллизии на расстояние между деталями
+                            if (partDistanceBoost > 0) {
+                                outerPath = InflatePaths(outerPath, partDistanceBoost, JoinType::Round, EndType::Polygon);
+                            }
                             m_nfpCache[key] = outerPath;
                         }
                     }
@@ -680,11 +693,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 clipper.Execute(ClipType::Difference, FillRule::NonZero, finalNFP);
                 innerNFPClipper = finalNFP;
             }
-
-            // ШАГ 3: Поиск лучшей позиции в FinalNFP
-            // FinalNFP - это набор полигонов (зон), куда можно поставить деталь.
-            // Нам нужно выбрать ОДНУ точку.
-            // Эвристика: Left-Bottom (минимальный X, при равенстве - минимальный Y).
 
             double bestScoreX = std::numeric_limits<double>::max();
             double bestScoreY = std::numeric_limits<double>::max();
@@ -713,7 +721,9 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             for (const auto& path : innerNFPClipper) {
                 for (const auto& pt : path) {
                     if (!sheet.isCustomShape) {
-                        if (pt.x < 0 || pt.y < 0 || pt.x > maxX || pt.y > maxY) {
+                        if (pt.x < marginBoost || pt.y < marginBoost ||
+                            pt.x > sheetWidthLocal - marginBoost - pW ||
+                            pt.y > sheetHeightLocal - marginBoost - pH) {
                             continue;
                         }
                     }
@@ -777,8 +787,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 pp.originalPartId = originalPart.id;
                 pp.sheetId = sheet.id;
                 pp.rotation = rotIdx * angleStep;
-                pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount + sheetOffsetX;
-                pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount + sheetOffsetY;
+                pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + sheetOffsetX;
+                pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + sheetOffsetY;
                 solution.placedParts.push_back(pp);
                 solution.partsMap[originalPart.id] = originalPart;
 
@@ -808,12 +818,18 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                 int newSheetHLocal = static_cast<int>(newSheet.height * NFPCalculator::NFP_SCALE);
 
                 if (!newSheet.isCustomShape) {
-                    if (pW <= newSheetWLocal && pH <= newSheetHLocal) {
-                        PlacedItem newItem{partIdx, rotIdx, partShape, 0, 0};
+                    if (pW <= newSheetWLocal - 2 * marginBoost && pH <= newSheetHLocal - 2 * marginBoost) {
+                        PlacedItem newItem{partIdx, rotIdx, partShape, static_cast<int>(marginBoost), static_cast<int>(marginBoost)};
+                        moveBoostSet(newItem.poly, newItem.x, newItem.y);
                         newSheet.placedItems.push_back(newItem);
                         sheets.push_back(newSheet);
 
-                        PlacedPart pp{originalPart.id, newSheet.id, offsetAmount, offsetAmount, rotIdx * angleStep};
+                        PlacedPart pp;
+                        pp.originalPartId = originalPart.id;
+                        pp.sheetId = newSheet.id;
+                        pp.rotation = rotIdx * angleStep;
+                        pp.x = static_cast<double>(marginBoost) / NFPCalculator::NFP_SCALE;
+                        pp.y = static_cast<double>(marginBoost) / NFPCalculator::NFP_SCALE;
                         solution.placedParts.push_back(pp);
                         solution.partsMap[originalPart.id] = originalPart;
                         placedOnNewSheet = true;
@@ -843,6 +859,10 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                             newSheetInnerNFP = NFPCalculator::toClipper(innerFit);
                             m_innerNfpCache[key] = newSheetInnerNFP;
                         }
+                    }
+
+                    if (!newSheetInnerNFP.empty() && marginBoost > 0) {
+                        newSheetInnerNFP = InflatePaths(newSheetInnerNFP, -marginBoost, JoinType::Miter, EndType::Polygon);
                     }
 
                     if (!newSheetInnerNFP.empty()) {
@@ -884,8 +904,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
                             pp.originalPartId = originalPart.id;
                             pp.sheetId = newSheet.id;
                             pp.rotation = rotIdx * angleStep;
-                            pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + offsetAmount + tOffsetX;
-                            pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + offsetAmount + tOffsetY;
+                            pp.x = (static_cast<double>(newItem.x) / NFPCalculator::NFP_SCALE) + tOffsetX;
+                            pp.y = (static_cast<double>(newItem.y) / NFPCalculator::NFP_SCALE) + tOffsetY;
                             solution.placedParts.push_back(pp);
                             solution.partsMap[originalPart.id] = originalPart;
                             placedOnNewSheet = true;
@@ -920,8 +940,9 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
             sheetPartsArea += boost::polygon::area(rotatedPartsCache.at(parts[item.id].id)[item.rotation]);
         }
 
-        double realMaxX = (static_cast<double>(maxBoostX) / NFPCalculator::NFP_SCALE) + offsetAmount;
-        double realMaxY = (static_cast<double>(maxBoostY) / NFPCalculator::NFP_SCALE) + offsetAmount;
+        // К границам полезной области можно прибавить отступ для учета в Bounding Box (по желанию)
+        double realMaxX = (static_cast<double>(maxBoostX) / NFPCalculator::NFP_SCALE) + params.sheetMargin;
+        double realMaxY = (static_cast<double>(maxBoostY) / NFPCalculator::NFP_SCALE) + params.sheetMargin;
 
         NestingSheet ns;
         ns.id = sheet.id;
@@ -938,9 +959,8 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
     }
 
     solution.utilization = (totalBoundingBoxArea > 0) ? (partsArea / totalBoundingBoxArea) * 100.0 : 0.0;
-
-    // qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
     solution.showRemnants = params.showRemnants;
     solution.cutThickness = params.cutThickness;
+
     return solution;
 }
