@@ -246,6 +246,11 @@ void GeometryPainter::drawNestingSolution(QGraphicsScene *scene, const NestingSo
         QBrush partBrush(colorMap[partId], Qt::FDiagPattern);
         scene->addPath(finalPath, QPen(Qt::NoPen), partBrush);
 
+        if (solution.cutThickness > 0.0) {
+            QPen cutPen(QColor(255, 50, 50, 150), solution.cutThickness, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+            scene->addPath(finalPath, cutPen, Qt::NoBrush);
+        }
+
         drawPart(scene, originalPart, partPen, finalTransform);
     }
 }

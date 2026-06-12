@@ -2,6 +2,69 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QGraphicsScene>
+#include "geometrypainter.h"
+
+SheetItemWidget::SheetItemWidget(const SheetRequest& req, QWidget* parent)
+    : QWidget(parent), m_request(req)
+{
+    setFixedHeight(95);
+    setAttribute(Qt::WA_StyledBackground, true);
+    setStyleSheet("SheetItemWidget { background-color: transparent; border-bottom: 1px solid #ddd; margin: 2px; }");
+
+    QHBoxLayout* mainLayout = new QHBoxLayout(this);
+    mainLayout->setContentsMargins(5, 5, 5, 5);
+
+    QGraphicsView* previewView = new QGraphicsView(this);
+    previewView->setFixedSize(80, 80);
+    previewView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    previewView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    previewView->setInteractive(false);
+    previewView->setAttribute(Qt::WA_TransparentForMouseEvents);
+    previewView->setStyleSheet("background: white; border: 1px solid #ccc;");
+
+    QGraphicsScene* scene = new QGraphicsScene(this);
+
+    Part renderPart;
+    if (req.isCustomShape && req.customShape.has_value()) {
+        renderPart = req.customShape.value();
+    } else {
+        Line top{ {0, req.height}, {req.width, req.height} };
+        Line right{ {req.width, req.height}, {req.width, 0} };
+        Line bottom{ {req.width, 0}, {0, 0} };
+        Line left{ {0, 0}, {0, req.height} };
+        renderPart.lines = {top, right, bottom, left};
+    }
+
+    GeometryPainter::drawPart(scene, renderPart, QPen(Qt::black, 0));
+    previewView->setScene(scene);
+    previewView->scale(1, -1);
+    previewView->fitInView(scene->itemsBoundingRect(), Qt::KeepAspectRatio);
+
+    mainLayout->addWidget(previewView);
+
+    QVBoxLayout* infoLayout = new QVBoxLayout();
+    QString titleText = req.isCustomShape ?
+                            QString::fromStdString(req.customShape.value().name) :
+                            QString("%1 x %2 мм").arg(req.width).arg(req.height);
+
+    QString qtyText = req.isInfinite ? tr("Беск.") : QString("%1 шт.").arg(req.quantity);
+
+    infoLayout->addWidget(new QLabel("<b>" + titleText + "</b>"));
+    infoLayout->addWidget(new QLabel(qtyText));
+    infoLayout->addStretch();
+
+    mainLayout->addLayout(infoLayout, 1);
+
+    QPushButton* btnRemove = new QPushButton("X");
+    btnRemove->setFixedWidth(30);
+    connect(btnRemove, &QPushButton::clicked, this, [this]() { emit removeRequested(this); });
+    mainLayout->addWidget(btnRemove);
+}
+
+SheetRequest SheetItemWidget::getRequest() const {
+    return m_request;
+}
 
 SheetListWidget::SheetListWidget(QWidget *parent) : QWidget(parent) {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
@@ -30,7 +93,6 @@ SheetListWidget::SheetListWidget(QWidget *parent) : QWidget(parent) {
     connect(checkInfinite, &QCheckBox::toggled, spinQty, &QSpinBox::setDisabled);
 
     QPushButton *btnAdd = new QPushButton(tr("+ Прямоугольный"));
-    btnAdd->setFixedWidth(30);
     connect(btnAdd, &QPushButton::clicked, this, &SheetListWidget::addSheet);
 
     inputLayout->addWidget(spinWidth);
@@ -42,91 +104,62 @@ SheetListWidget::SheetListWidget(QWidget *parent) : QWidget(parent) {
 
     mainLayout->addLayout(inputLayout);
 
-    QPushButton *btnLoadCustom = new QPushButton(tr("Загрузить фигурный лист (DXF)"));
-    connect(btnLoadCustom, &QPushButton::clicked, this, &SheetListWidget::requestLoadCustomSheet);
-    mainLayout->addWidget(btnLoadCustom);
+    QScrollArea *scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
 
-    listLayout = new QVBoxLayout();
-    mainLayout->addLayout(listLayout);
+    QWidget *scrollContent = new QWidget(scrollArea);
+    listLayout = new QVBoxLayout(scrollContent);
+    listLayout->setAlignment(Qt::AlignTop); // Прижимаем элементы к верху
+    listLayout->setContentsMargins(0, 0, 0, 0);
+
+    scrollArea->setWidget(scrollContent);
+    mainLayout->addWidget(scrollArea, 1); // stretch = 1 заставит ScrollArea занять доступное место
 
     addSheet();
 }
 
 void SheetListWidget::addSheet() {
     SheetRequest req;
+    req.id = m_sheetIdCounter++;
     req.width = spinWidth->value();
     req.height = spinHeight->value();
     req.quantity = spinQty->value();
     req.isInfinite = checkInfinite->isChecked();
 
-    QWidget *rowWidget = new QWidget(this);
-    QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
-    rowLayout->setContentsMargins(0, 2, 0, 2);
-
-    QString text = QString("%1 x %2 мм, %3")
-                       .arg(req.width).arg(req.height)
-                       .arg(req.isInfinite ? tr("Беск.") : QString::number(req.quantity) + tr(" шт."));
-
-    rowLayout->addWidget(new QLabel(text));
-
-    QPushButton *btnRemove = new QPushButton("X");
-    btnRemove->setFixedWidth(30);
-    rowLayout->addWidget(btnRemove);
-
-    connect(btnRemove, &QPushButton::clicked, [this, rowWidget]() {
-        for (auto it = m_sheets.begin(); it != m_sheets.end(); ++it) {
-            if (it->widget == rowWidget) {
-                m_sheets.erase(it);
-                break;
-            }
-        }
-        rowWidget->deleteLater();
+    SheetItemWidget* item = new SheetItemWidget(req, this);
+    connect(item, &SheetItemWidget::removeRequested, this, [this](SheetItemWidget* w) {
+        std::erase(m_sheetWidgets, w);
+        w->deleteLater();
     });
 
-    m_sheets.push_back({req, rowWidget});
-    listLayout->addWidget(rowWidget);
+    m_sheetWidgets.push_back(item);
+    listLayout->addWidget(item);
 }
 
 void SheetListWidget::addCustomSheet(const Part& part) {
     SheetRequest req;
     req.id = m_sheetIdCounter++;
-    req.width = 0;
-    req.height = 0;
     req.quantity = spinQty->value();
     req.isInfinite = checkInfinite->isChecked();
     req.isCustomShape = true;
     req.customShape = part;
 
-    QWidget *rowWidget = new QWidget(this);
-    QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
-    rowLayout->setContentsMargins(0, 2, 0, 2);
-
-    QString text = QString("Остаток: %1, %2")
-                       .arg(QString::fromStdString(part.name))
-                       .arg(req.isInfinite ? tr("Беск.") : QString::number(req.quantity) + tr(" шт."));
-
-    rowLayout->addWidget(new QLabel(text));
-
-    QPushButton *btnRemove = new QPushButton("X");
-    btnRemove->setFixedWidth(30);
-    rowLayout->addWidget(btnRemove);
-
-    connect(btnRemove, &QPushButton::clicked, [this, rowWidget]() {
-        for (auto it = m_sheets.begin(); it != m_sheets.end(); ++it) {
-            if (it->widget == rowWidget) {
-                m_sheets.erase(it);
-                break;
-            }
-        }
-        rowWidget->deleteLater();
+    SheetItemWidget* item = new SheetItemWidget(req, this);
+    connect(item, &SheetItemWidget::removeRequested, this, [this](SheetItemWidget* w) {
+        std::erase(m_sheetWidgets, w);
+        w->deleteLater();
     });
 
-    m_sheets.push_back({req, rowWidget});
-    listLayout->addWidget(rowWidget);
+    m_sheetWidgets.push_back(item);
+    listLayout->addWidget(item);
 }
 
 std::vector<SheetRequest> SheetListWidget::getSheets() const {
     std::vector<SheetRequest> res;
-    for (const auto& s : m_sheets) res.push_back(s.data);
+    res.reserve(m_sheetWidgets.size());
+    for (const auto& w : m_sheetWidgets) {
+        res.push_back(w->getRequest());
+    }
     return res;
 }

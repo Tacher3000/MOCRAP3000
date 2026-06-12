@@ -73,6 +73,7 @@ struct NestingSolution {
     double utilization = 0.0;
     int generation = 0;
     bool showRemnants = true;
+    double cutThickness = 0.0;
 
     std::map<int, Part> partsMap;
 };

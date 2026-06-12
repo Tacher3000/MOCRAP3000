@@ -74,12 +74,13 @@ ViewerWidget::ViewerWidget(QWidget *parent) : QWidget(parent) {
 void ViewerWidget::setGeometry(const Geometry& geom) {
     QGraphicsScene* scene = view->scene();
     scene->clear();
-    // view->resetView();
+    view->resetView();
 
     QPen thinPen(Qt::black);
     thinPen.setWidth(0);
 
     GeometryPainter::drawGeometry(scene, geom, thinPen);
 
-    view->fitInView(scene->itemsBoundingRect(), Qt::KeepAspectRatio);
+    scene->setSceneRect(scene->itemsBoundingRect());
+    view->fitInView(scene->sceneRect(), Qt::KeepAspectRatio);
 }

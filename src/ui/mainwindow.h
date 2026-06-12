@@ -66,6 +66,7 @@ private:
 
     QSplitter *mainSplitter;
     QSplitter *viewersSplitter;
+    QSplitter *leftSplitter;
 
     QLabel *statusLabel;
     QProgressBar *progressBar;

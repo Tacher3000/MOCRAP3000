@@ -108,86 +108,51 @@ void NFPCalculator::convolveTwoPolygonSets(BoostPolygonSet& result, const BoostP
 BoostPolygonSet NFPCalculator::calculateOuterNFP(const BoostPolygonSet& A, const BoostPolygonSet& B) {
     using namespace Clipper2Lib;
 
-    Paths64 pathsA = toClipper(A);
-    Paths64 pathsB = toClipper(B);
+    BoostPolygonSet B_negated;
+    std::vector<BoostPolygonWithHoles> b_polys;
+    B.get(b_polys);
 
-    // Лямбда-функция для децимации (прореживания) вершин.
-    // Удаляет точки, не влияющие на геометрию, сокращая N*M сложность Минковского.
-    auto decimate = [](const Paths64& paths) -> Paths64 {
-        Paths64 res;
-        res.reserve(paths.size());
-        for (const auto& path : paths) {
-            if (path.size() < 3) {
-                res.push_back(path);
-                continue;
-            }
-
-            Path64 simp;
-            simp.reserve(path.size());
-            simp.push_back(path.front());
-
-            for (size_t i = 1; i < path.size() - 1; ++i) {
-                Point64 p1 = simp.back();
-                Point64 p2 = path[i];
-                Point64 p3 = path[i+1];
-
-                double dx1 = static_cast<double>(p2.x - p1.x);
-                double dy1 = static_cast<double>(p2.y - p1.y);
-                double lenSq = dx1 * dx1 + dy1 * dy1;
-
-                // Пропускаем точки стоящие ближе 0.1 мм (1000 единиц при NFP_SCALE=10000)
-                if (lenSq < 1000000.0) continue;
-
-                double dx2 = static_cast<double>(p3.x - p2.x);
-                double dy2 = static_cast<double>(p3.y - p2.y);
-
-                double len1 = std::sqrt(lenSq);
-                double len2 = std::hypot(dx2, dy2);
-
-                // Векторное произведение для оценки угла излома
-                double cross = dx1 * dy2 - dy1 * dx2;
-
-                // Сохраняем точку, только если излом больше ~1.5 градуса
-                if (std::abs(cross) > 0.026 * len1 * len2) {
-                    simp.push_back(p2);
-                }
-            }
-            simp.push_back(path.back());
-            res.push_back(simp);
+    for (const auto& poly : b_polys) {
+        std::vector<BoostPoint> pts;
+        for (auto it = boost::polygon::begin_points(poly); it != boost::polygon::end_points(poly); ++it) {
+            pts.push_back(BoostPoint(-it->x(), -it->y()));
         }
-        return res;
-    };
-
-    // Применяем децимацию к исходным геометриям
-    pathsA = decimate(pathsA);
-    Paths64 negB;
-    negB.reserve(pathsB.size());
-
-    // Инвертируем B (-B) для Outer NFP
-    for (const auto& path : decimate(pathsB)) {
-        Path64 nPath;
-        nPath.reserve(path.size());
-        for (const auto& pt : path) {
-            nPath.push_back(Point64(-pt.x, -pt.y));
-        }
-        // Восстанавливаем порядок обхода (winding) после инверсии координат
-        std::ranges::reverse(nPath);
-        negB.push_back(nPath);
+        BoostPolygon negPoly;
+        boost::polygon::set_points(negPoly, pts.begin(), pts.end());
+        B_negated.insert(negPoly);
     }
 
-    // Вычисление Minkowski через sweep-алгоритм Clipper2
-    Paths64 collisionZone;
-    for (const auto& pA : pathsA) {
-        for (const auto& pB : negB) {
+    Paths64 aPaths = toClipper(A);
+    Paths64 bNegPaths = toClipper(B_negated);
+    Paths64 outerNFP;
+
+    for (const auto& pA : aPaths) {
+        for (const auto& pB : bNegPaths) {
             Paths64 swept = MinkowskiSum(pB, pA, true);
-            collisionZone.insert(collisionZone.end(), swept.begin(), swept.end());
+            outerNFP.insert(outerNFP.end(), swept.begin(), swept.end());
+
+            if (!pB.empty()) {
+                Path64 translatedA;
+                translatedA.reserve(pA.size());
+                for (const auto& pt : pA) {
+                    translatedA.push_back(Point64(pt.x + pB.front().x, pt.y + pB.front().y));
+                }
+                outerNFP.push_back(translatedA);
+            }
+
+            if (!pA.empty()) {
+                Path64 translatedB;
+                translatedB.reserve(pB.size());
+                for (const auto& pt : pB) {
+                    translatedB.push_back(Point64(pt.x + pA.front().x, pt.y + pA.front().y));
+                }
+                outerNFP.push_back(translatedB);
+            }
         }
     }
 
-    // Склеиваем все контуры коллизии в единый NFP
-    collisionZone = Union(collisionZone, FillRule::NonZero);
-
-    return fromClipper(collisionZone);
+    outerNFP = Union(outerNFP, FillRule::NonZero);
+    return fromClipper(outerNFP);
 }
 
 

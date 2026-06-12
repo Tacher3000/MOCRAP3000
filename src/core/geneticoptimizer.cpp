@@ -941,5 +941,6 @@ NestingSolution GeneticOptimizer::decode(const Individual& ind,
 
     // qDebug() << "  [Decode] Finished. Utilization:" << solution.utilization;
     solution.showRemnants = params.showRemnants;
+    solution.cutThickness = params.cutThickness;
     return solution;
 }

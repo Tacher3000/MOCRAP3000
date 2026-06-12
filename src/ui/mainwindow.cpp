@@ -55,15 +55,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     QLabel* partsLabel = new QLabel(tr("<b>Загруженные детали:</b>"), this);
     leftLayout->addWidget(partsLabel);
 
+    leftSplitter = new QSplitter(Qt::Vertical, this);
+    leftSplitter->setStyleSheet(QStringLiteral("QSplitter::handle { background-color: #999999; height: 1px; }"));
+
     partList = new PartListWidget(this);
-    leftLayout->addWidget(partList);
+    leftSplitter->addWidget(partList);
 
     connect(partList, &PartListWidget::partSelected, this, &MainWindow::onPartSelected);
     connect(partList, &PartListWidget::showAllPartsRequested, this, &MainWindow::onShowAllPartsRequested);
 
     sheetList = new SheetListWidget(this);
-    leftLayout->addWidget(sheetList);
-    connect(sheetList, &SheetListWidget::requestLoadCustomSheet, this, &MainWindow::loadCustomSheet);
+    leftSplitter->addWidget(sheetList);
+
+    leftLayout->addWidget(leftSplitter, 1);
 
     btnStartOptimization = new QPushButton(tr("Запустить оптимизацию"), this);
     btnStartOptimization->setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #4CAF50; color: white; border-radius: 4px;");
@@ -134,8 +138,10 @@ void MainWindow::showEvent(QShowEvent *event) {
         firstShow = false;
         QTimer::singleShot(50, this, [this]() {
             int w = this->width();
-            mainSplitter->setSizes(QList<int>() << w * 0.25 << w * 0.75);
+            int h = this->height();
+            mainSplitter->setSizes(QList<int>() << w * 0.2 << w * 0.8);
             viewersSplitter->setSizes(QList<int>() << height() * 0.5 << height() * 0.5);
+            leftSplitter->setSizes(QList<int>() << h * 0.7 << h * 0.3);
         });
     }
 }
@@ -143,6 +149,7 @@ void MainWindow::showEvent(QShowEvent *event) {
 void MainWindow::setupMenu() {
     QMenu *fileMenu = menuBar()->addMenu(tr("Файл"));
     connect(fileMenu->addAction(tr("Загрузить DXF")), &QAction::triggered, this, &MainWindow::loadFile);
+    connect(fileMenu->addAction(tr("Загрузить фигурный лист DXF")), &QAction::triggered, this, &MainWindow::loadCustomSheet);
     connect(fileMenu->addAction(tr("Очистить список деталей")), &QAction::triggered, this, &MainWindow::clearAll);
 
     fileMenu->addSeparator();
@@ -329,5 +336,5 @@ void MainWindow::showHelp() {
     QMessageBox::about(this, tr("О программе MOCRAP3000"),
                        tr("<h2>MOCRAP3000</h2>"
                           "<p>Программа для раскроя листового материала на основе DXF файлов.</p>"
-                          "<p>Версия: 0.5 (Selectable Parts)</p>"));
+                          "<p>Версия: 1.0</p>"));
 }

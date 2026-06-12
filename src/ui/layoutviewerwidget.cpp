@@ -90,5 +90,6 @@ void LayoutViewerWidget::showSolution(int index) {
 
     GeometryPainter::drawNestingSolution(scene, sol);
 
-    view->fitInView(scene->itemsBoundingRect(), Qt::KeepAspectRatio);
+    scene->setSceneRect(scene->itemsBoundingRect());
+    view->fitInView(scene->sceneRect(), Qt::KeepAspectRatio);
 }

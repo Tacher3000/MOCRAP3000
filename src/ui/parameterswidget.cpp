@@ -33,15 +33,17 @@ ParametersWidget::ParametersWidget(QWidget *parent) : QDialog(parent) {
     layout->addWidget(spacingGroup);
     layout->addStretch();
 
-    showRemnantsCheck = new QCheckBox(tr("Визуализировать полезные остатки"), this);
-    showRemnantsCheck->setChecked(savedShowRemnants);
-    layout->addWidget(showRemnantsCheck);
-
-    spacingLayout->addWidget(new QLabel(tr("Кол-во поворотов:")));
+    QHBoxLayout *rotationsSpinLayout = new QHBoxLayout(this);
+    rotationsSpinLayout->addWidget(new QLabel(tr("Кол-во поворотов:")));
     rotationsSpin = new QSpinBox(this);
     rotationsSpin->setRange(1, 360);
     rotationsSpin->setValue(savedRotations);
-    spacingLayout->addWidget(rotationsSpin);
+    rotationsSpinLayout->addWidget(rotationsSpin);
+    layout->addLayout(rotationsSpinLayout);
+
+    showRemnantsCheck = new QCheckBox(tr("Визуализировать полезные остатки"), this);
+    showRemnantsCheck->setChecked(savedShowRemnants);
+    layout->addWidget(showRemnantsCheck);
 
     QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
